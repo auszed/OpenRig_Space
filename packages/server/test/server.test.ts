@@ -72,6 +72,28 @@ describe('office server', () => {
     expect(source.sent).toEqual([]);
   });
 
+  test('answers a prompt only when that exact choice is still on the screen', async () => {
+    const { base, source } = await boot();
+    const answer = (id: string, body: unknown) =>
+      fetch(`${base}/api/agents/${id}/answer`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+
+    // mock-3 is stopped at "1. Yes / 2. Yes, and don't ask again / 3. No".
+    expect((await answer('mock-3', { key: '3', label: 'Yes' })).status).toBe(409); // text does not match
+    expect((await answer('mock-3', { key: '7', label: 'No' })).status).toBe(409); // no such choice
+    expect((await answer('mock-3', { key: 'y', label: 'Yes' })).status).toBe(400);
+    expect((await answer('mock-3', { key: '1' })).status).toBe(400);
+    expect((await answer('mock-2', { key: '1', label: 'Yes' })).status).toBe(409); // not at a prompt
+    expect(source.answered).toEqual([]);
+
+    expect((await answer('mock-3', { key: '3', label: 'No' })).status).toBe(200);
+    expect(source.answered).toEqual([{ session: 'build-web@demo', key: '3' }]);
+    // The question is gone now, so pressing again does nothing.
+    expect((await answer('mock-3', { key: '3', label: 'No' })).status).toBe(409);
+    expect(source.answered).toHaveLength(1);
+  });
+
   test('keeps the last office and flags it when the source fails', async () => {
     const source = new MockSource();
     const { base, server } = await boot(source);

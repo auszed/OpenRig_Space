@@ -53,4 +53,16 @@ export class OpenRigSource implements OfficeSource {
       throw new OpenRigError(`OpenRig did not deliver the message: ${res.error ?? res.reason ?? 'no reason given'}`);
     }
   }
+
+  async answerPrompt(session: string, key: string): Promise<void> {
+    // OpenRig refuses ordinary sends into an open prompt. Answering one is its explicit,
+    // audited "interact" path, which needs a reason for the record.
+    const res = await this.client.post<{ ok?: boolean; sent?: boolean; error?: string; reason?: string }>(
+      '/api/transport/send',
+      { session, text: key, dangerouslyInteract: true, reason: 'Choice picked by the person in OpenRig Space' },
+    );
+    if (res.ok === false || res.sent === false) {
+      throw new OpenRigError(`OpenRig did not deliver the answer: ${res.error ?? res.reason ?? 'no reason given'}`);
+    }
+  }
 }
