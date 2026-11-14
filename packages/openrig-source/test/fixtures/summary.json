@@ -1,0 +1,18 @@
+[
+ {
+  "id": "01M78QN9ZZ5PVAN04CGME719XN",
+  "name": "kernel",
+  "nodeCount": 4,
+  "archivedAt": null,
+  "lifecycleState": "attention_required",
+  "hasLiveAgents": true
+ },
+ {
+  "id": "01M78VSCAASSX9C54RCB8QFRS5",
+  "name": "growth",
+  "nodeCount": 8,
+  "archivedAt": null,
+  "lifecycleState": "attention_required",
+  "hasLiveAgents": true
+ }
+]
