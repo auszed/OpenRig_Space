@@ -1,5 +1,5 @@
 import { resolve, sep } from 'node:path';
-import { emptySnapshot, type OfficeSnapshot, type OfficeSource } from '@backoffice/core';
+import { emptySnapshot, parsePromptOptions, type OfficeSnapshot, type OfficeSource } from '@backoffice/core';
 
 export interface ServerOptions {
   source: OfficeSource;
@@ -22,6 +22,7 @@ export interface OfficeServer {
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 const MAX_MESSAGE = 4000;
 const TOPIC = 'office';
+const SCREEN_LINES_FOR_ANSWER = 60;
 
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -116,7 +117,7 @@ export function startServer(opts: ServerOptions): OfficeServer {
       }
       if (path === '/api/office' && req.method === 'GET') return json(snapshot);
 
-      const agentRoute = path.match(/^\/api\/agents\/([^/]+)\/(screen|message)$/);
+      const agentRoute = path.match(/^\/api\/agents\/([^/]+)\/(screen|message|answer)$/);
       if (agentRoute) {
         const session = sessionOf(decodeURIComponent(agentRoute[1]!));
         if (!session) return json({ error: 'No such agent.' }, 404);
@@ -135,6 +136,25 @@ export function startServer(opts: ServerOptions): OfficeServer {
               return json({ error: `A message needs 1 to ${MAX_MESSAGE} characters.` }, 400);
             }
             await source.sendMessage(session, text);
+            return json({ ok: true });
+          }
+          if (agentRoute[2] === 'answer' && req.method === 'POST') {
+            if (!req.headers.get('content-type')?.startsWith('application/json')) {
+              return json({ error: 'Send JSON.' }, 415);
+            }
+            const body = (await req.json().catch(() => null)) as { key?: unknown; label?: unknown } | null;
+            const key = typeof body?.key === 'string' ? body.key : '';
+            if (!/^[1-9]$/.test(key) || typeof body?.label !== 'string') {
+              return json({ error: 'An answer needs the digit of a choice and its text.' }, 400);
+            }
+            // The key is only pressed if the question the person saw is still the one on screen.
+            const now = parsePromptOptions(await source.readScreen(session, SCREEN_LINES_FOR_ANSWER));
+            const option = now.find((o) => o.key === key);
+            if (!option || option.label !== body.label) {
+              return json({ error: 'That question is no longer on the screen. Nothing was pressed.' }, 409);
+            }
+            await source.answerPrompt(session, key);
+            void refresh();
             return json({ ok: true });
           }
         } catch (err) {
