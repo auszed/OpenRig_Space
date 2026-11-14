@@ -41,6 +41,9 @@ model, status, context, work) and lets you change its harness, model, skills and
 
 ### Task board
 
+**View** in the top bar holds the view settings: the **Look** (theme) and the **task board opacity**
+(40–100%). A lower opacity lets the office show through the board. Both are remembered in your browser.
+
 **Task board** in the top bar opens one board for every team. The chips at the top filter it to one or
 more rigs (the choice is remembered), and **Tasks** next to a rig in the list opens it filtered to that rig.
 The columns are OpenRig's queue states: To do, In progress, Blocked, and Done for the last seven days.
@@ -77,6 +80,10 @@ conversation, so the office asks first.
   seat's model to opencode as `OPENCODE_CONFIG_CONTENT`, because opencode's interactive command has
   no `--model` flag. The agent panel can be dragged by its
 header and resized from its left, right and bottom edges; double-click the header to put it back.
+
+After pulling or switching branches, rebuild and **restart** the server (`bun run build`, then stop and
+`bun run start` again): `start` does not reload changed code. A page newer than its server says so when
+you try to use a feature the server doesn't have yet.
 
 ## How it works, in short
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { isOpenTask } from '@backoffice/core';
   import type { OfficeStore } from '../state/office.svelte.ts';
-  import { themes } from '../themes.ts';
+  import ViewSettings from './ViewSettings.svelte';
 
   let { store }: { store: OfficeStore } = $props();
 
@@ -25,14 +25,7 @@
   {#if problem}
     <span class="problem" role="status">{problem}</span>
   {/if}
-  <label>
-    Look
-    <select value={store.themeId} onchange={(e) => store.setTheme(e.currentTarget.value)}>
-      {#each themes as theme (theme.id)}
-        <option value={theme.id}>{theme.name}</option>
-      {/each}
-    </select>
-  </label>
+  <ViewSettings {store} />
 </header>
 
 <style>
@@ -61,6 +54,8 @@
     font-weight: 700;
   }
   header {
+    /* Above the task board, so its view settings can be changed while the board is open. */
+    z-index: 6 !important;
     position: absolute;
     top: 12px;
     left: 12px;
@@ -104,19 +99,5 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  label {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--muted);
-  }
-  select {
-    padding: 4px 8px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--panel-solid);
-    color: var(--text);
   }
 </style>

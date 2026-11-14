@@ -7,6 +7,18 @@ import { themeById } from '../themes.ts';
 
 const THEME_KEY = 'backoffice.theme';
 const BOARD_RIGS_KEY = 'backoffice.board.rigs';
+const BOARD_OPACITY_KEY = 'backoffice.board.opacity';
+const STALE_SERVER = 'The office server is older than this page. Restart it (bun run start) and try again.';
+
+/** The server's catch-all answer for an API path it does not have: it runs older code than this page. */
+function errorFrom(res: Response, body: { error?: string }, fallback: string): Error {
+  return new Error(res.status === 404 && body.error === 'Not found.' ? STALE_SERVER : (body.error ?? fallback));
+}
+
+function opacityFrom(value: string | null): number {
+  const n = Number(value);
+  return value !== null && Number.isFinite(n) ? Math.min(Math.max(n, 0.4), 1) : 0.85;
+}
 
 function remembered(key: string): string | null {
   try {
@@ -25,6 +37,8 @@ export class OfficeStore {
   /** The task board is open, and which rigs it shows (empty: all of them). */
   boardOpen = $state(false);
   boardRigs = $state<string[]>(this.rememberedRigs());
+  /** How solid the task board is drawn, 0.4 to 1. */
+  boardOpacity = $state(opacityFrom(remembered(BOARD_OPACITY_KEY)));
   themeId = $state(themeById(new URLSearchParams(location.search).get('theme') ?? remembered(THEME_KEY)).id);
   /** The floor plan, rebuilt only when rigs, pods or head counts change, never on a status change. */
   layout: Layout = $derived.by(() => this.planFor(this.snapshot.agents));
@@ -94,6 +108,15 @@ export class OfficeStore {
     }
   }
 
+  setBoardOpacity(value: number): void {
+    this.boardOpacity = opacityFrom(String(value));
+    try {
+      localStorage.setItem(BOARD_OPACITY_KEY, String(this.boardOpacity));
+    } catch {
+      // Without storage the choice lasts for this visit only.
+    }
+  }
+
   openBoard(rig?: string): void {
     if (rig) this.setBoardRigs([rig]);
     this.boardOpen = true;
@@ -116,7 +139,7 @@ export class OfficeStore {
   private async post(url: string, payload: unknown, failure: string): Promise<unknown> {
     const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error ?? `${failure} (${res.status})`);
+    if (!res.ok) throw errorFrom(res, body, `${failure} (${res.status})`);
     return body;
   }
 
@@ -186,7 +209,7 @@ export class OfficeStore {
   async readSettings(agentId: string): Promise<AgentSettings> {
     const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/settings`);
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error ?? `Settings unavailable (${res.status})`);
+    if (!res.ok) throw errorFrom(res, body, `Settings unavailable (${res.status})`);
     return body;
   }
 
@@ -197,7 +220,7 @@ export class OfficeStore {
       body: JSON.stringify(patch),
     });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error ?? `Settings not saved (${res.status})`);
+    if (!res.ok) throw errorFrom(res, body, `Settings not saved (${res.status})`);
     return body;
   }
 

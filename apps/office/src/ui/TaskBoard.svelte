@@ -95,7 +95,7 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && !composing && (store.boardOpen = false)} />
 
-<div class="scrim" role="presentation" onclick={(e) => e.target === e.currentTarget && (store.boardOpen = false)}>
+<div class="scrim" role="presentation" style:--board-opacity={store.boardOpacity} onclick={(e) => e.target === e.currentTarget && (store.boardOpen = false)}>
   <section class="board" aria-label="Task board">
     <header>
       <h2>Task board</h2>
@@ -195,14 +195,15 @@
 </div>
 
 <style>
+  /* Starts below the top bar, so the bar (and its view settings) stays usable while the board is open. */
   .scrim {
     position: absolute;
-    inset: 0;
+    inset: 64px 0 0 0;
     z-index: 5 !important;
     display: grid;
     place-items: center;
-    padding: 70px 12px 12px;
-    background: color-mix(in srgb, var(--panel-solid) 35%, transparent);
+    padding: 6px 12px 12px;
+    background: color-mix(in srgb, var(--panel-solid) 8%, transparent);
   }
   .board {
     width: min(1180px, 100%);
@@ -212,7 +213,10 @@
     gap: 10px;
     padding: 14px;
     border-radius: 12px;
-    background: var(--panel-solid);
+    /* See-through by the viewer's choice (View settings); the blur keeps text readable over the office. */
+    background: color-mix(in srgb, var(--panel-solid) calc(var(--board-opacity, 0.85) * 100%), transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
     overflow: hidden;
@@ -259,6 +263,7 @@
     font-weight: 600;
   }
   .compose {
+    background: color-mix(in srgb, var(--panel-solid) max(90%, calc(var(--board-opacity, 0.85) * 100%)), transparent);
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px 12px;
@@ -315,7 +320,7 @@
     overflow-y: auto;
     padding: 8px;
     border-radius: 10px;
-    background: var(--panel);
+    background: color-mix(in srgb, var(--panel-solid) calc(var(--board-opacity, 0.85) * 60%), transparent);
     border: 1px solid var(--border);
   }
   h3 {
@@ -329,12 +334,13 @@
     text-transform: uppercase;
     color: var(--muted);
   }
+  /* Cards stay nearly solid at any board opacity, so their text is always legible. */
   .card {
     display: grid;
     gap: 6px;
     padding: 8px 10px;
     border-radius: 8px;
-    background: var(--panel-solid);
+    background: color-mix(in srgb, var(--panel-solid) max(92%, calc(var(--board-opacity, 0.85) * 100%)), transparent);
     border: 1px solid var(--border);
   }
   .card.done {
