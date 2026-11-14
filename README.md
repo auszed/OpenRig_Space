@@ -18,14 +18,8 @@ cd ~/backoffice-agents
 ./node_modules/.bin/bun run start      # serves http://127.0.0.1:47831
 ```
 
-The server listens on `127.0.0.1` only. To open the office from another computer, forward the port
-over SSH from that computer and keep the command running:
-
-```sh
-ssh -N -L 47831:127.0.0.1:47831 <user>@<server>     # add -p <port> if SSH is not on 22
-```
-
-Then open <http://localhost:47831>.
+The server listens on `127.0.0.1` only, so it cannot be reached from the internet. To open the
+office from your own computer, see [Open it from your PC](#open-it-from-your-pc-ssh-tunnel).
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -36,6 +30,117 @@ Then open <http://localhost:47831>.
 
 Controls: drag to move, scroll to zoom, right-drag to turn, click an agent (or its row in the list)
 to open it, `Follow` to keep the camera on it, `Esc` to close.
+
+## How it works, in short
+
+```
+ your PC                              the VPS
+┌─────────────┐    SSH tunnel    ┌──────────────────────────────────────────────┐
+│  browser    │ ───────────────> │ office server ──reads──> OpenRig ──> agents  │
+│ localhost:  │    port 47831    │ 127.0.0.1:47831          127.0.0.1:7433      │
+│   47831     │ <─────────────── │                                              │
+└─────────────┘   live updates   └──────────────────────────────────────────────┘
+```
+
+1. **OpenRig runs the agents.** Each agent is a "seat" in a team ("rig"), sitting in its own
+   terminal on the VPS. OpenRig knows, for every seat, whether it is working, idle or stopped at a
+   question.
+2. **The office server asks OpenRig what is going on.** It runs on the VPS next to OpenRig, reads
+   the list of seats and their tasks, and turns that into one simple picture of the office: who is
+   there, which pod they belong to, what state they are in.
+3. **Your browser draws that picture in 3D.** Each seat becomes a character at a desk. When a seat
+   changes state, OpenRig tells the server, the server tells the browser, and the character changes
+   within about a second.
+4. **Clicking an agent** asks the server for that agent's terminal text and its open tasks. The
+   message box sends your text to the server, which types it into that agent's prompt.
+
+The browser never talks to OpenRig or to the agents directly. Everything goes through the office
+server, and the office server only listens on the VPS itself. That is why you need the tunnel.
+
+### What you see for each agent
+
+| The agent is… | In the office | Meaning |
+|---|---|---|
+| Working | Typing, monitor lit | It is in the middle of a turn. |
+| Idle | Sitting still, monitor dim | It finished and is waiting for work. |
+| Needs you | Orange bubble with the reason, top of the list | It stopped at a question or a permission prompt and will not continue until someone answers in its terminal. |
+| Unknown | Greyed out | OpenRig cannot tell (for example, the session is gone). |
+
+Agents sit together by pod, each pod with its own shirt colour. The OpenRig `kernel` team (the
+operator and its helpers) has its own glass room.
+
+## Open it from your PC (SSH tunnel)
+
+A tunnel makes port 47831 on your PC lead to port 47831 on the VPS, through your normal SSH login.
+Nothing is opened to the internet.
+
+### 1. Find your SSH details
+
+You need four values: the server **address**, the SSH **port**, the **user**, and the **key file**
+(or a password). If you have connected to this VPS by SSH before, they are on your PC. Run these
+on your PC, not on the VPS.
+
+macOS or Linux:
+
+```sh
+cat ~/.ssh/config                                  # look for HostName, Port, User, IdentityFile
+grep -h "ssh " ~/.zsh_history ~/.bash_history      # earlier ssh commands you typed
+ls ~/.ssh                                          # your key files (id_ed25519, id_rsa, ...)
+```
+
+Windows (PowerShell):
+
+```powershell
+Get-Content $env:USERPROFILE\.ssh\config
+Select-String -Path (Get-PSReadLineOption).HistorySavePath -Pattern "ssh "
+Get-ChildItem $env:USERPROFILE\.ssh
+```
+
+If these show nothing, the values are in your hosting provider's panel, usually as a ready-made
+"SSH access" line such as `ssh -p 22022 user@host`.
+
+### 2. Check that plain SSH works
+
+```sh
+ssh -p <port> <user>@<address> "echo connected"
+```
+
+It should print `connected`. If it does not, fix that first; the tunnel uses the same login.
+Add `-i <path-to-key>` if your key is not picked up on its own.
+
+### 3. Open the tunnel
+
+```sh
+ssh -N -p <port> -L 47831:127.0.0.1:47831 <user>@<address>
+```
+
+The command prints nothing and seems to hang. That is correct: the tunnel is open for as long as it
+runs. Leave that window open and browse to <http://localhost:47831>. Press `Ctrl+C` to close it.
+
+### 4. Optional: save it under a short name
+
+Add this to `~/.ssh/config` on your PC (on Windows, `C:\Users\<you>\.ssh\config`):
+
+```
+Host backoffice
+  HostName <address>
+  Port <port>
+  User <user>
+  IdentityFile ~/.ssh/<key-file>
+  LocalForward 47831 127.0.0.1:47831
+```
+
+From then on the tunnel is `ssh -N backoffice`.
+
+### If it does not work
+
+| What you see | Likely cause |
+|---|---|
+| `Connection refused` or a timeout from `ssh` | Wrong address or port, or the provider does not offer SSH for this machine. |
+| `Permission denied` | Wrong user or key. |
+| `bind: Address already in use` | Something on your PC already uses 47831. Use `-L 47999:127.0.0.1:47831` and open `http://localhost:47999`. |
+| The browser says it cannot connect, the tunnel is open | The office server is not running on the VPS. Start it with the commands in "Run it". |
+| The page loads and says OpenRig is unreachable | The OpenRig daemon is stopped on the VPS. |
 
 ## What it can do today
 
