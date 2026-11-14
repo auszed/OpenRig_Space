@@ -8,6 +8,11 @@ import { themeById } from '../themes.ts';
 const THEME_KEY = 'backoffice.theme';
 const BOARD_RIGS_KEY = 'backoffice.board.rigs';
 const BOARD_OPACITY_KEY = 'backoffice.board.opacity';
+const GLOW_KEY = 'backoffice.glow';
+/** How long everyone stays at their desks once they have all sat down, after "Everyone to desks". */
+export const RALLY_SECONDS = 5;
+/** If someone cannot reach their desk, the rally counts down anyway after this long. */
+const RALLY_WALK_LIMIT_MS = 40_000;
 const STALE_SERVER = 'The office server is older than this page. Restart it (bun run start) and try again.';
 
 /** The server's catch-all answer for an API path it does not have: it runs older code than this page. */
@@ -18,6 +23,21 @@ function errorFrom(res: Response, body: { error?: string }, fallback: string): E
 function opacityFrom(value: string | null): number {
   const n = Number(value);
   return value !== null && Number.isFinite(n) ? Math.min(Math.max(n, 0.4), 1) : 0.85;
+}
+
+/** Brightness of the night glow, each 1 by default (the theme's own value), 0 to 2. */
+export interface GlowLevels { lines: number; floor: number; screens: number }
+const GLOW_DEFAULT: GlowLevels = { lines: 1, floor: 1, screens: 1 };
+
+function glowFrom(value: string | null): GlowLevels {
+  try {
+    const saved = JSON.parse(value ?? '{}') as Partial<Record<keyof GlowLevels, unknown>>;
+    const level = (n: unknown, fallback: number) =>
+      typeof n === 'number' && Number.isFinite(n) ? Math.min(Math.max(n, 0), 2) : fallback;
+    return { lines: level(saved.lines, 1), floor: level(saved.floor, 1), screens: level(saved.screens, 1) };
+  } catch {
+    return { ...GLOW_DEFAULT };
+  }
 }
 
 function remembered(key: string): string | null {
@@ -39,6 +59,15 @@ export class OfficeStore {
   boardRigs = $state<string[]>(this.rememberedRigs());
   /** How solid the task board is drawn, 0.4 to 1. */
   boardOpacity = $state(opacityFrom(remembered(BOARD_OPACITY_KEY)));
+  /** The View menu's glow sliders, multiplying the theme's neon and screen light. */
+  glowLevels = $state<GlowLevels>(glowFrom(remembered(GLOW_KEY)));
+  /**
+   * "Everyone to desks": `going` while they walk there, `there` while they sit for a few seconds
+   * (`rallyLeft` counts down), then everyone goes back to where OpenRig says they are.
+   */
+  rally = $state<'off' | 'going' | 'there'>('off');
+  rallyLeft = $state(0);
+  private rallyTimer: ReturnType<typeof setInterval> | null = null;
   themeId = $state(themeById(new URLSearchParams(location.search).get('theme') ?? remembered(THEME_KEY)).id);
   /** The floor plan, rebuilt only when rigs, pods or head counts change, never on a status change. */
   layout: Layout = $derived.by(() => this.planFor(this.snapshot.agents));
@@ -50,8 +79,16 @@ export class OfficeStore {
   /** The desk each agent owns. */
   home: Map<string, Seat> = $derived(this.assignment.seats);
   /** Where each agent is right now: its desk, the lounge or the review room. */
-  seats: Map<string, Seat> = $derived(locateAgents(this.snapshot.agents, this.snapshot.queue, this.layout, this.home));
-  litDesks: Set<string> = $derived(litDesks(this.snapshot.agents, this.snapshot.queue, this.home));
+  seats: Map<string, Seat> = $derived.by(() => {
+    const located = locateAgents(this.snapshot.agents, this.snapshot.queue, this.layout, this.home);
+    if (this.rally === 'off') return located;
+    return new Map([...located, ...this.home]);
+  });
+  litDesks: Set<string> = $derived(
+    this.rally === 'off'
+      ? litDesks(this.snapshot.agents, this.snapshot.queue, this.home)
+      : new Set([...this.home.values()].flatMap((s) => (s.deskId ? [s.deskId] : []))),
+  );
   teams: TeamGroup[] = $derived(groupByTeam(this.snapshot.agents));
   /** Where each character is drawn this frame, written by the characters as they walk. Not reactive. */
   readonly live = new Map<string, { x: number; z: number }>();
@@ -115,6 +152,51 @@ export class OfficeStore {
     } catch {
       // Without storage the choice lasts for this visit only.
     }
+  }
+
+  setGlow(levels: Partial<GlowLevels>): void {
+    this.glowLevels = glowFrom(JSON.stringify({ ...this.glowLevels, ...levels }));
+    try {
+      localStorage.setItem(GLOW_KEY, JSON.stringify(this.glowLevels));
+    } catch {
+      // Without storage the choice lasts for this visit only.
+    }
+  }
+
+  resetGlow(): void {
+    this.setGlow(GLOW_DEFAULT);
+  }
+
+  /**
+   * Sends every agent to its own desk, screens on, and keeps them there for RALLY_SECONDS once
+   * all of them have sat down. Only the picture changes; OpenRig and the agents are not touched.
+   */
+  callRally(): void {
+    this.endRally();
+    this.rally = 'going';
+    const started = Date.now();
+    let sitUntil = 0;
+    this.rallyTimer = setInterval(() => {
+      if (this.rally === 'going') {
+        const seated = [...this.home].every(([id, desk]) => {
+          const at = this.live.get(id);
+          return !at || Math.hypot(at.x - desk.x, at.z - desk.z) < 0.05;
+        });
+        if (!seated && Date.now() - started < RALLY_WALK_LIMIT_MS) return;
+        this.rally = 'there';
+        sitUntil = Date.now() + RALLY_SECONDS * 1000;
+      }
+      this.rallyLeft = Math.max(0, Math.ceil((sitUntil - Date.now()) / 1000));
+      if (Date.now() >= sitUntil) this.endRally();
+    }, 200);
+  }
+
+  /** Everyone goes back to where OpenRig says they are. */
+  endRally(): void {
+    if (this.rallyTimer) clearInterval(this.rallyTimer);
+    this.rallyTimer = null;
+    this.rally = 'off';
+    this.rallyLeft = 0;
   }
 
   openBoard(rig?: string): void {

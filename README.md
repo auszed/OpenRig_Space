@@ -227,6 +227,10 @@ From then on the tunnel is `ssh -N backoffice`.
   rules, and saves changes to the team files (see below).
 - Two looks, switchable from **View** in the top bar: **Studio** and **Night shift** (dark, with
   red and blue screen light and red neon walkways).
+- **View** also has glow sliders (neon lines, neon on the floor, screen glow; 0–200%, remembered in
+  the browser) for looks that have them, and an **Everyone to desks** button: every agent walks to
+  its own desk with its screen on, sits there for 5 seconds, then goes back. Only the picture
+  changes; OpenRig and the agents are not touched.
 - The standup room, QA lab, gym and janitor closet are in the building but not wired
   to anything yet. Layout editing, music, GitHub and Jira are also not built yet.
 

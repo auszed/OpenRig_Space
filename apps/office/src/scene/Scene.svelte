@@ -75,7 +75,14 @@
         group.add(tint);
       }
     }
-    return { group, material, halo, box, plane };
+    return { group, material, halo, box, plane, intensity: style.intensity, spill };
+  });
+  // The View menu's sliders change brightness in place, without rebuilding the strips.
+  $effect(() => {
+    if (!neon) return;
+    neon.material.emissiveIntensity = neon.intensity * store.glowLevels.lines;
+    if (neon.halo) neon.halo.opacity = Math.min(1, neon.spill * store.glowLevels.floor);
+    invalidate();
   });
   $effect(() => {
     const old = neon;
@@ -124,6 +131,11 @@
     const old = glowMats;
     return () => old.forEach((m) => m.dispose());
   });
+  $effect(() => {
+    const base = store.theme.materials.screenOn.emissiveIntensity ?? 2;
+    for (const m of glowMats) m.emissiveIntensity = base * store.glowLevels.screens;
+    invalidate();
+  });
   const screenMat = (index: number) => glowMats[index % Math.max(glowMats.length, 1)] ?? mats.screenOn;
 
   /**
@@ -161,7 +173,7 @@
   $effect(() => {
     pool.forEach((light, i) => {
       const g = glows[i];
-      light.intensity = g && glow ? glow.intensity * g.strength : 0;
+      light.intensity = g && glow ? glow.intensity * g.strength * store.glowLevels.screens : 0;
       light.distance = glow?.distance ?? 4;
       if (g) {
         light.position.set(g.x, g.y, g.z);

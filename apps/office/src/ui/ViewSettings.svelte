@@ -1,11 +1,20 @@
 <script lang="ts">
-  import type { OfficeStore } from '../state/office.svelte.ts';
+  import { RALLY_SECONDS, type GlowLevels, type OfficeStore } from '../state/office.svelte.ts';
   import { themes } from '../themes.ts';
 
   let { store }: { store: OfficeStore } = $props();
 
   let open = $state(false);
   let root = $state<HTMLElement>();
+
+  /** Glow sliders, shown only for the parts this look actually lights. */
+  const sliders = $derived(
+    [
+      { key: 'lines', label: 'Neon lines', show: !!store.theme.walkways },
+      { key: 'floor', label: 'Neon on the floor', show: !!store.theme.walkways?.spill },
+      { key: 'screens', label: 'Screen glow', show: !!store.theme.lighting.screenGlow },
+    ].filter((s) => s.show) as Array<{ key: keyof GlowLevels; label: string }>,
+  );
 </script>
 
 <svelte:window
@@ -52,6 +61,35 @@
         />
       </label>
       <p>Lower lets the office show through the board.</p>
+
+      {#if sliders.length}
+        <div class="group">
+          {#each sliders as slider (slider.key)}
+            <label>
+              <span>{slider.label} <output>{Math.round(store.glowLevels[slider.key] * 100)}%</output></span>
+              <input
+                type="range"
+                min="0"
+                max="200"
+                step="10"
+                value={Math.round(store.glowLevels[slider.key] * 100)}
+                oninput={(e) => store.setGlow({ [slider.key]: Number(e.currentTarget.value) / 100 })}
+              />
+            </label>
+          {/each}
+          <button class="link" onclick={() => store.resetGlow()}>Reset glow</button>
+        </div>
+      {/if}
+
+      <div class="group">
+        {#if store.rally === 'off'}
+          <button class="action" onclick={() => store.callRally()} disabled={store.home.size === 0}>Everyone to desks</button>
+          <p>Everyone walks to their desk and stays {RALLY_SECONDS} seconds. Only the picture changes.</p>
+        {:else}
+          <button class="action" onclick={() => store.endRally()}>Send them back now</button>
+          <p role="status">{store.rally === 'going' ? 'Walking to their desks…' : `Back in ${store.rallyLeft} s`}</p>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>
@@ -120,6 +158,37 @@
   input[type='range'] {
     width: 100%;
     accent-color: var(--accent);
+  }
+  .group {
+    display: grid;
+    gap: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .action {
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-text);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .action:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .link {
+    justify-self: start;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    text-decoration: underline;
+    cursor: pointer;
   }
   p {
     margin: 0;
