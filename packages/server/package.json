@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
-  "exports": { ".": "./src/server.ts" },
+  "exports": {
+    ".": "./src/server.ts"
+  },
   "dependencies": {
     "@backoffice/core": "workspace:*",
-    "@backoffice/openrig-source": "workspace:*"
+    "@backoffice/openrig-source": "workspace:*",
+    "yaml": "^2.9.1"
   }
 }

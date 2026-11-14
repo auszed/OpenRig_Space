@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { assignSeats, behaviorFor, byAttention, defaultLayout, desksForZone, MockSource } from '../src/index.ts';
-import type { Agent } from '../src/index.ts';
+import {
+  assignSeats, behaviorFor, byAttention, defaultLayout, desksForZone, groupByTeam, isLead, litDesks, locateAgents,
+  MockSource, route, waitingOnPr, whereabouts,
+} from '../src/index.ts';
+import type { Agent, QueueItem } from '../src/index.ts';
 
 const agent = (id: string, rig: string, pod: string, status: Agent['status'] = 'idle'): Agent => ({
   id, name: `${pod}.${id}`, session: `${id}@${rig}`, rig, pod, kind: 'agent', runtime: 't', model: null,
@@ -55,6 +58,100 @@ describe('layout', () => {
     const standing = [...seats.values()].filter((s) => s.deskId === null);
     expect(standing.length).toBe(30 - 20);
     expect(new Set(standing.map((s) => `${s.x},${s.z}`)).size).toBe(standing.length);
+  });
+});
+
+describe('where agents are', () => {
+  const layout = defaultLayout();
+  const item = (over: Partial<QueueItem>): QueueItem => ({
+    id: 'q', summary: 'Build the thing', state: 'pending', from: 'x@r', to: 'y@r', priority: null, blockedOn: null,
+    updatedAt: '', ...over,
+  });
+  const inRoom = (id: string, p: { x: number; z: number }) => {
+    const r = layout.rooms.find((room) => room.id === id)!;
+    return p.x > r.x && p.x < r.x + r.w && p.z > r.z && p.z < r.z + r.d;
+  };
+  const key = (p: { x: number; z: number }) => `${p.x.toFixed(2)},${p.z.toFixed(2)}`;
+
+  test('busy and asking agents are at their desk, idle ones in the lounge, PR waiters in review', () => {
+    const agents = [
+      agent('1', 'r', 'a', 'working'), agent('2', 'r', 'a', 'needs-input'), agent('3', 'r', 'a', 'idle'),
+      agent('4', 'r', 'b', 'idle'), agent('5', 'r', 'b', 'unknown'),
+    ];
+    const queue = [item({ summary: 'PR #12 ready', from: '4@r', blockedOn: 'review' })];
+    const home = assignSeats(agents, layout).seats;
+    const now = locateAgents(agents, queue, layout, home);
+    expect(now.get('1')).toEqual(home.get('1')!);
+    expect(now.get('2')).toEqual(home.get('2')!);
+    expect(now.get('3')!.deskId).toBeNull();
+    expect(now.get('3')!.posture).toBe('sofa');
+    expect(inRoom('lounge', now.get('3')!)).toBe(true);
+    expect(inRoom('lounge', now.get('5')!)).toBe(true);
+    expect(inRoom('review', now.get('4')!)).toBe(true);
+    expect(now.get('4')!.posture).not.toBe('stand');
+    expect(litDesks(agents, queue, home)).toEqual(new Set([home.get('1')!.deskId!, home.get('2')!.deskId!]));
+  });
+
+  test('waiting on a PR reads open queue items only', () => {
+    const a = { session: '4@r' };
+    expect(waitingOnPr(a, [item({ to: '4@r', summary: 'Open a pull request for the fix' })])).toBe(true);
+    expect(waitingOnPr(a, [item({ from: '4@r', blockedOn: 'PR review' })])).toBe(true);
+    expect(waitingOnPr(a, [item({ to: '4@r', summary: 'PR #3', state: 'done' })])).toBe(false);
+    expect(waitingOnPr(a, [item({ to: '4@r', summary: 'Improve the preview page' })])).toBe(false);
+    expect(waitingOnPr(a, [item({ to: 'other@r', summary: 'PR #3' })])).toBe(false);
+    expect(whereabouts({ status: 'working', session: '4@r' }, [item({ to: '4@r', summary: 'PR #3' })])).toBe('desk');
+  });
+
+  test('the lounge seats a full office, and a bigger crowd stands without overlapping', () => {
+    const desks = layout.zones.reduce((n, zone) => n + zone.seats, 0);
+    expect(layout.lounge.spots.length).toBeGreaterThanOrEqual(desks);
+    for (const spot of layout.lounge.spots) expect(inRoom('lounge', spot)).toBe(true);
+    for (const spot of layout.review.spots) expect(inRoom('review', spot)).toBe(true);
+    expect(new Set([...layout.lounge.spots, ...layout.review.spots].map(key)).size)
+      .toBe(layout.lounge.spots.length + layout.review.spots.length);
+
+    const crowd = Array.from({ length: 30 }, (_, i) => agent(String(i), 'big', `p${i % 3}`));
+    const now = locateAgents(crowd, [], layout, assignSeats(crowd, layout).seats);
+    expect(now.size).toBe(30);
+    const standing = [...now.values()].filter((s) => s.posture === 'stand');
+    expect(standing.length).toBe(30 - layout.lounge.spots.length);
+    for (const s of standing) expect(inRoom('lounge', s)).toBe(true);
+    expect(new Set([...now.values()].map(key)).size).toBe(30);
+  });
+
+  test('one agent going to work leaves everyone else where they sat', () => {
+    const agents = Array.from({ length: 12 }, (_, i) => agent(String(i), 'r', `p${i % 4}`));
+    const home = assignSeats(agents, layout).seats;
+    const before = locateAgents(agents, [], layout, home);
+    const after = locateAgents(agents.map((a) => (a.id === '3' ? { ...a, status: 'working' as const } : a)), [], layout, home);
+    for (const a of agents) if (a.id !== '3') expect(after.get(a.id)).toEqual(before.get(a.id)!);
+    expect(after.get('3')).toEqual(home.get('3')!);
+  });
+
+  test('walking into a room goes through its door', () => {
+    const lounge = layout.lounge.spots[0]!;
+    const review = layout.review.spots[0]!;
+    const path = route(lounge, review, layout);
+    expect(path).toHaveLength(3);
+    expect(path[0]!.x).toBe(-5);
+    expect(path[0]!.z).toBeGreaterThan(-7);
+    expect(path[1]!.z).toBeLessThan(-7);
+    expect(route(lounge, layout.lounge.spots[5]!, layout)).toHaveLength(1);
+  });
+
+  test('teams are grouped by rig then pod, lead first', () => {
+    const named = (name: string, rig: string, pod: string) => ({ ...agent(name, rig, pod), name });
+    const teams = groupByTeam([
+      named('build.site', 'growth', 'build'), named('orch.lead', 'growth', 'orch'), named('build.demo', 'growth', 'build'),
+      named('queue.worker', 'kernel', 'queue'), named('advisor.lead', 'kernel', 'advisor'),
+    ]);
+    expect(teams.map((t) => t.rig)).toEqual(['growth', 'kernel']);
+    expect(teams[0]!.lead?.name).toBe('orch.lead');
+    expect(teams[0]!.pods.map((p) => p.pod)).toEqual(['orch', 'build']);
+    expect(teams[0]!.pods[1]!.agents.map((a) => a.name)).toEqual(['build.demo', 'build.site']);
+    expect(teams[1]!.lead?.name).toBe('advisor.lead');
+    expect(isLead({ name: 'lead.planner', pod: 'lead' })).toBe(true);
+    expect(isLead({ name: 'reach.leader', pod: 'reach' })).toBe(false);
   });
 });
 
