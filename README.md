@@ -1,4 +1,6 @@
-# Backoffice Agents
+# OpenRig Space
+
+Repository: <https://github.com/auszed/OpenRig_Space>
 
 A 3D office for your AI agents. Every agent running under [OpenRig](https://www.openrig.dev) is a
 character at a desk, and you can see at a glance who is working, who is idle and who is waiting for
