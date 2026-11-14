@@ -1,8 +1,13 @@
 import { resolve, sep } from 'node:path';
-import { emptySnapshot, parsePromptOptions, type OfficeSnapshot, type OfficeSource } from '@backoffice/core';
+import {
+  cleanPatch, emptySnapshot, parsePromptOptions, SettingsError,
+  type OfficeSnapshot, type OfficeSource, type SettingsStore,
+} from '@backoffice/core';
 
 export interface ServerOptions {
   source: OfficeSource;
+  /** Where agent settings are read and saved. Without it the settings routes answer 404. */
+  settings?: SettingsStore;
   port: number;
   /** Stays on the loopback address unless explicitly changed. */
   hostname?: string;
@@ -117,11 +122,24 @@ export function startServer(opts: ServerOptions): OfficeServer {
       }
       if (path === '/api/office' && req.method === 'GET') return json(snapshot);
 
-      const agentRoute = path.match(/^\/api\/agents\/([^/]+)\/(screen|message|answer)$/);
+      const agentRoute = path.match(/^\/api\/agents\/([^/]+)\/(screen|message|answer|settings)$/);
       if (agentRoute) {
-        const session = sessionOf(decodeURIComponent(agentRoute[1]!));
+        const agentId = decodeURIComponent(agentRoute[1]!);
+        const session = sessionOf(agentId);
         if (!session) return json({ error: 'No such agent.' }, 404);
         try {
+          if (agentRoute[2] === 'settings') {
+            const agent = snapshot.agents.find((a) => a.id === agentId)!;
+            if (!opts.settings) return json({ error: 'Settings are not available on this server.' }, 404);
+            if (req.method === 'GET') return json(await opts.settings.read(agent));
+            if (req.method === 'PUT') {
+              if (!req.headers.get('content-type')?.startsWith('application/json')) {
+                return json({ error: 'Send JSON.' }, 415);
+              }
+              return json(await opts.settings.write(agent, cleanPatch(await req.json().catch(() => null))));
+            }
+            return json({ error: 'Method not allowed.' }, 405);
+          }
           if (agentRoute[2] === 'screen' && req.method === 'GET') {
             const lines = Math.min(Math.max(Number(url.searchParams.get('lines')) || 40, 1), 400);
             return json({ content: await source.readScreen(session, lines) });
@@ -158,7 +176,7 @@ export function startServer(opts: ServerOptions): OfficeServer {
             return json({ ok: true });
           }
         } catch (err) {
-          return json({ error: (err as Error).message }, 502);
+          return json({ error: (err as Error).message }, err instanceof SettingsError ? err.status : 502);
         }
         return json({ error: 'Method not allowed.' }, 405);
       }

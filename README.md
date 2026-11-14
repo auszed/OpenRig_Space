@@ -14,7 +14,7 @@ Bun is installed inside the project (`node_modules/.bin/bun`), so nothing global
 have Bun on your PATH you can drop the `./node_modules/.bin/` prefix.
 
 ```sh
-cd ~/backoffice-agents
+cd ~/openrig/space
 ./node_modules/.bin/bun install        # first time only
 ./node_modules/.bin/bun run build      # builds the frontend into apps/office/dist
 ./node_modules/.bin/bun run start      # serves http://127.0.0.1:47831
@@ -27,6 +27,7 @@ office from your own computer, see [Open it from your PC](#open-it-from-your-pc-
 |---|---|---|
 | `BACKOFFICE_PORT` | `47831` | Port to listen on. The server refuses to start if it is taken. |
 | `BACKOFFICE_SOURCE` | `openrig` | `mock` shows a made-up office without OpenRig. |
+| `BACKOFFICE_TEAMS_DIR` | `~/openrig/teams` (or `~/openrig-teams` if that does not exist) | Folder with one sub-folder per rig holding its `rig.yaml`. Agent settings are read and saved there. |
 | `OPENRIG_URL` | `http://127.0.0.1:7433` | Where the OpenRig daemon answers. |
 | `OPENRIG_TERMINAL_BEARER_TOKEN` | unset | Only if your daemon was started with tokens. |
 
@@ -65,13 +66,21 @@ server, and the office server only listens on the VPS itself. That is why you ne
 
 | The agent is… | In the office | Meaning |
 |---|---|---|
-| Working | Typing, monitor lit | It is in the middle of a turn. |
-| Idle | Sitting still, monitor dim | It finished and is waiting for work. |
-| Needs you | Orange bubble with the reason, top of the list | It stopped at a question or a permission prompt and will not continue until someone answers in its terminal. |
-| Unknown | Greyed out | OpenRig cannot tell (for example, the session is gone). |
+| Working | At its desk, typing, monitor lit | It is in the middle of a turn. |
+| Idle | On a sofa in the lounge, its desk monitor off | It finished and is waiting for work. It walks to its desk when work starts. |
+| Idle, waiting on a PR | On a chair in the PR review room | It is idle and one of its open queue items mentions a PR, a pull request or a review. |
+| Needs you | At its desk, orange bubble with the reason, counted in its team's header | It stopped at a question or a permission prompt and will not continue until someone answers in its terminal. |
+| Unknown | Greyed out, in the lounge | OpenRig cannot tell (for example, the session is gone). |
 
-Agents sit together by pod, each pod with its own shirt colour. The OpenRig `kernel` team (the
-operator and its helpers) has its own glass room.
+Desks are grouped by pod, each pod with its own shirt colour. The OpenRig `kernel` team (the
+operator and its helpers) has its own glass room. The lounge has a seat for every desk; if more
+agents than that are waiting, the extra ones stand.
+
+The list on the left is grouped by rig, then by pod. The agent whose name ends in `.lead` is marked
+as the team's lead, with a star on its name tag in the office.
+
+OpenRig does not report a pull-request state, so "waiting on a PR" is read from the words of the
+queue items. It is a guess, and it can be wrong.
 
 ## Open it from your PC (SSH tunnel)
 
@@ -155,11 +164,13 @@ From then on the tunnel is `ssh -N backoffice`.
   moved and resized, and remembers where you left it.
 - Answering an agent: when an agent is stopped at a numbered question (for example a permission
   prompt with "1. Yes / 2. … / 3. No"), the panel shows one button per choice.
+- Agent settings: the **Settings** button in the panel shows one agent's model, skills and tool
+  rules, and saves changes to the team files (see below).
 - Two looks, switchable from the top bar: **Studio** and **Night shift**.
-- The standup room, PR review room, QA lab, gym and janitor closet are in the building but not wired
+- The standup room, QA lab, gym and janitor closet are in the building but not wired
   to anything yet. Layout editing, music, GitHub and Jira are also not built yet.
 
-Two things in the office act on a real agent:
+Three things in the office act on a real agent:
 
 - **The message box** types your text into the agent's prompt, exactly like `rig send`. OpenRig
   refuses it while the agent is stopped at a question.
@@ -167,6 +178,17 @@ Two things in the office act on a real agent:
   the same as you pressing the key there, so "Yes" really approves the command shown above it.
   The server reads the screen again first and presses nothing if that question is no longer the
   one on screen. OpenRig records each answer in its audit log.
+
+- **Saving settings** edits the files OpenRig builds the team from, and nothing in OpenRig itself:
+  - Model and tool rules go to the agent's entry in `<teams dir>/<rig>/rig.yaml` (`model`,
+    `claude_permissions`). Skills go to the `agent.yaml` that entry points at
+    (`profiles.<profile>.uses.skills`); agents built from the same `agent.yaml` share them.
+  - Only the lines for that setting change, and the previous file is kept beside it as `.bak`.
+  - OpenRig keeps its own record for a seat that already exists, so the office also runs
+    `rig seat set-model` and `rig seat set-permissions` for it. Those take effect at the agent's
+    next restart; nothing changes in the running conversation.
+  - Skills reach an agent only when it is launched fresh.
+  - Rigs without team files, such as the built-in `kernel`, are shown as not editable.
 
 There are no buttons that stop, reset or relaunch agents.
 
@@ -201,8 +223,10 @@ function that receives the shape kit and returns a three.js object. The built-in
 ### Change the floor plan
 
 `defaultLayout()` in `packages/core/src/layout.ts` is the whole building as data: rooms, walls,
-desk benches and furniture positions. Agents are seated by `assignSeats()`: pods stay together and
-nobody moves when a status changes.
+desk benches and furniture positions. `assignSeats()` gives every agent a home desk: pods stay
+together and nobody changes desk when a status changes. `locateAgents()` then says where each agent
+is right now (its desk, the lounge or the review room), following `whereabouts()` in
+`packages/core/src/behavior.ts`.
 
 ### Use something other than OpenRig
 

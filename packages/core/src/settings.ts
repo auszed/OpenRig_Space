@@ -1,0 +1,117 @@
+import type { Agent } from './model.ts';
+
+/** What can be set for one agent: its model, its skills and the tools it may use without asking. */
+export interface AgentSettings {
+  /** False when there is nothing to edit; `reason` then says why. */
+  editable: boolean;
+  reason: string | null;
+  /** Null means no model is set for this agent and the runtime's own default applies. */
+  model: string | null;
+  skills: string[];
+  availableSkills: string[];
+  /** Tool rules only exist for some runtimes. */
+  toolsEditable: boolean;
+  allow: string[];
+  deny: string[];
+  /** The files these values are read from and written to. */
+  files: string[];
+}
+
+export interface SettingsPatch {
+  model?: string | null;
+  skills?: string[];
+  allow?: string[];
+  deny?: string[];
+}
+
+export interface SettingsSaved {
+  settings: AgentSettings;
+  /** Plain sentences about what was written and when it takes effect. */
+  notes: string[];
+}
+
+export type SettingsAgent = Pick<Agent, 'name' | 'session' | 'rig' | 'pod' | 'runtime'>;
+
+export interface SettingsStore {
+  read(agent: SettingsAgent): Promise<AgentSettings>;
+  write(agent: SettingsAgent, patch: SettingsPatch): Promise<SettingsSaved>;
+}
+
+/** A refusal the person can act on; `status` is the HTTP status it maps to. */
+export class SettingsError extends Error {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
+    super(message);
+  }
+}
+
+/** Model names people commonly pick; any other id can be typed in. */
+export const MODEL_CHOICES = ['fable', 'opus', 'sonnet', 'haiku'] as const;
+
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,79}$/;
+const MAX_RULES = 100;
+const MAX_RULE_LENGTH = 200;
+
+function stringList(value: unknown, what: string): string[] {
+  if (!Array.isArray(value) || value.length > MAX_RULES) {
+    throw new SettingsError(`${what} must be a list of at most ${MAX_RULES} entries.`);
+  }
+  const out: string[] = [];
+  for (const entry of value) {
+    const text = typeof entry === 'string' ? entry.trim() : '';
+    if (!text || text.length > MAX_RULE_LENGTH || /[\r\n]/.test(text)) {
+      throw new SettingsError(`Each entry in ${what} must be one line of 1 to ${MAX_RULE_LENGTH} characters.`);
+    }
+    if (!out.includes(text)) out.push(text);
+  }
+  return out;
+}
+
+/** Checks a patch from outside and returns a clean copy. Throws `SettingsError` on anything odd. */
+export function cleanPatch(input: unknown): SettingsPatch {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new SettingsError('Send the settings as a JSON object.');
+  const raw = input as Record<string, unknown>;
+  const patch: SettingsPatch = {};
+  if ('model' in raw) {
+    const model = raw.model === null ? null : typeof raw.model === 'string' ? raw.model.trim() : undefined;
+    if (model === undefined || (model !== null && model !== '' && !MODEL_ID.test(model))) {
+      throw new SettingsError('That does not look like a model name.');
+    }
+    patch.model = model || null;
+  }
+  if ('skills' in raw) patch.skills = stringList(raw.skills, 'skills');
+  if ('allow' in raw) patch.allow = stringList(raw.allow, 'allowed tools');
+  if ('deny' in raw) patch.deny = stringList(raw.deny, 'denied tools');
+  return patch;
+}
+
+const MOCK_SKILLS = ['code-review', 'systematic-debugging', 'test-driven-development', 'verification-before-completion'];
+
+/** Settings kept in memory, for the mock office and for tests. Nothing is written anywhere. */
+export class MemorySettings implements SettingsStore {
+  private saved = new Map<string, SettingsPatch>();
+
+  async read(agent: SettingsAgent): Promise<AgentSettings> {
+    const s = this.saved.get(agent.session) ?? {};
+    return {
+      editable: true,
+      reason: null,
+      model: s.model ?? null,
+      skills: s.skills ?? ['systematic-debugging'],
+      availableSkills: MOCK_SKILLS,
+      toolsEditable: true,
+      allow: s.allow ?? [],
+      deny: s.deny ?? [],
+      files: [],
+    };
+  }
+
+  async write(agent: SettingsAgent, patch: SettingsPatch): Promise<SettingsSaved> {
+    const unknown = patch.skills?.find((id) => !MOCK_SKILLS.includes(id));
+    if (unknown) throw new SettingsError(`There is no skill called "${unknown}".`);
+    this.saved.set(agent.session, { ...this.saved.get(agent.session), ...patch });
+    return { settings: await this.read(agent), notes: ['Saved in memory only: this is the mock office.'] };
+  }
+}
