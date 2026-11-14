@@ -299,6 +299,44 @@ describe('harness', () => {
   });
 });
 
+describe('working folder', () => {
+  const lead = { ...demo, name: 'orch.lead', session: 'orch-lead@growth', pod: 'orch' };
+  const site = { ...demo, name: 'build.site', session: 'build-site@growth', runtime: 'codex' };
+
+  test('is read with how many members share it', async () => {
+    const s = await store.read(demo);
+    expect(s.cwd).toBe('~/work');
+    expect(s.cwdSharedBy).toBe(1);
+    expect((await store.read(lead)).cwdSharedBy).toBe(2);
+  });
+
+  test('for one agent: one line changes, the comment stays, and the seat is told the full path', async () => {
+    const local = new TeamFileSettings({ teamsDir: dir, harnesses: catalog(), home: '/home/me', run: async (a) => (calls.push(a), { ok: true, output: '' }) });
+    const saved = await local.write(demo, { cwd: '~/projects/demo' });
+    expect(saved.settings.cwd).toBe('~/projects/demo');
+    expect(await rigText()).toContain('        cwd: "~/projects/demo" # shared folder');
+    expect(calls).toEqual([['seat', 'set-cwd', 'build-demo@growth', '--cwd', '/home/me/projects/demo', '--reason', 'Set in OpenRig Space']]);
+    expect(saved.notes.join(' ')).toContain('are not moved');
+  });
+
+  test('for the rig: everyone sharing the folder moves, members with their own folder stay', async () => {
+    // lead and site have no cwd line, so they share "no folder"; demo has its own.
+    const saved = await store.write(lead, { cwd: '/srv/growth', cwdScope: 'rig' });
+    const text = await rigText();
+    expect(text.match(/cwd: "\/srv\/growth"/g)).toHaveLength(2);
+    expect(text).toContain('cwd: "~/work" # shared folder');
+    expect(calls.map((c) => c[2])).toEqual(['orch-lead@growth', 'build-site@growth']);
+    expect(saved.notes.join(' ')).toContain('2 agents of growth');
+    expect((await store.read(site)).cwd).toBe('/srv/growth');
+  });
+
+  test('a seat that refuses the folder is named', async () => {
+    const failing = new TeamFileSettings({ teamsDir: dir, harnesses: catalog(), run: async () => ({ ok: false, output: 'preflight refused' }) });
+    const saved = await failing.write(demo, { cwd: '/srv/x' });
+    expect(saved.notes.join(' ')).toContain('build-demo@growth: preflight refused');
+  });
+});
+
 describe('settings routes', () => {
   let server: OfficeServer;
   let base: string;
@@ -332,6 +370,9 @@ describe('settings routes', () => {
     expect((await put([])).status).toBe(400);
     expect((await put({ runtime: 'rm -rf' })).status).toBe(400);
     expect((await put({ runtime: 'goose' })).status).toBe(400);
+    expect((await put({ cwd: 'relative/path' })).status).toBe(400);
+    expect((await put({ cwd: '/srv/../etc' })).status).toBe(400);
+    expect((await put({ cwd: '/srv/x', cwdScope: 'team' })).status).toBe(400);
     expect((await fetch(base.replace('mock-2', 'nobody'))).status).toBe(404);
     expect((await fetch(base, { method: 'DELETE' })).status).toBe(405);
   });

@@ -32,11 +32,14 @@
   {#each store.teams as team (team.rig)}
     {@const open = !closed[team.rig]}
     <section>
-      <button class="rig" aria-expanded={open} onclick={() => (closed[team.rig] = open)}>
-        <span class="caret" class:open>▸</span>
-        <span class="rig-name">{team.rig}</span>
-        <span class="tally">{tally(team.pods.flatMap((p) => p.agents))}</span>
-      </button>
+      <div class="rig-row">
+        <button class="rig" aria-expanded={open} onclick={() => (closed[team.rig] = open)}>
+          <span class="caret" class:open>▸</span>
+          <span class="rig-name">{team.rig}</span>
+          <span class="tally">{tally(team.pods.flatMap((p) => p.agents))}</span>
+        </button>
+        <button class="tasks" title="Open the task board for {team.rig}" onclick={() => store.openBoard(team.rig)}>Tasks</button>
+      </div>
       {#if open}
         {#each team.pods as group (group.pod)}
           <h3><span class="chip" style:background={store.colorOf(group.agents[0]!)}></span>{group.pod}</h3>
@@ -103,7 +106,21 @@
     color: inherit;
     font: inherit;
   }
+  .rig-row {
+    display: flex;
+    align-items: center;
+  }
+  .tasks {
+    width: auto;
+    flex: none;
+    padding: 3px 8px;
+    color: var(--muted);
+    font-size: 11px;
+    text-decoration: underline;
+  }
   .rig {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: baseline;
     gap: 6px;

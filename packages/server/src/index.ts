@@ -3,6 +3,7 @@ import { MemorySettings, MockSource, type OfficeSource } from '@backoffice/core'
 import { OpenRigSource } from '@backoffice/openrig-source';
 import { startServer } from './server.ts';
 import { TeamFileSettings } from './settings.ts';
+import { openrigWorkspace, RigQueueTasks } from './tasks.ts';
 
 const port = Number(process.env.BACKOFFICE_PORT ?? 47831);
 const kind = process.env.BACKOFFICE_SOURCE ?? 'openrig';
@@ -17,6 +18,8 @@ try {
   const server = startServer({
     source,
     settings: kind === 'mock' ? new MemorySettings() : new TeamFileSettings({ teamsDir: process.env.BACKOFFICE_TEAMS_DIR }),
+    tasks: source instanceof MockSource ? source : new RigQueueTasks({ person: process.env.BACKOFFICE_PERSON }),
+    workspace: kind === 'mock' ? async () => ({ root: '~/.openrig/workspace (mock)' }) : () => openrigWorkspace(),
     port,
     staticDir: resolve(import.meta.dir, '../../../apps/office/dist'),
   });

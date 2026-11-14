@@ -1,3 +1,4 @@
+import { isOpenTask, rigOfSession } from '@backoffice/core';
 import type { Agent, AgentStatus, QueueItem, RigInfo } from '@backoffice/core';
 
 /** The parts of OpenRig's answers that the office reads. Everything is optional: versions differ. */
@@ -96,15 +97,21 @@ export function normalizeRigs(rigs: RawRig[]): RigInfo[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function normalizeQueue(items: RawQueueItem[]): QueueItem[] {
+/** Closed rows older than this drop off the board. */
+export const DONE_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function normalizeQueue(items: RawQueueItem[], now = Date.now()): QueueItem[] {
   return items
     .filter((q) => !!q.qitemId)
+    // Open work always shows; finished work only for a week, so the board's last column stays short.
+    .filter((q) => isOpenTask(q.state ?? '') || !q.tsUpdated || now - Date.parse(q.tsUpdated) < DONE_KEPT_MS)
     .map((q) => ({
       id: q.qitemId!,
       summary: (q.summary ?? '(no summary)').slice(0, 300),
       state: q.state ?? 'unknown',
       from: q.sourceSession ?? '',
       to: q.destinationSession ?? '',
+      rig: rigOfSession(q.destinationSession ?? ''),
       priority: q.priority ?? null,
       blockedOn: q.blockedOn ?? null,
       updatedAt: q.tsUpdated ?? '',
