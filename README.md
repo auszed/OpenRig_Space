@@ -32,7 +32,9 @@ office from your own computer, see [Open it from your PC](#open-it-from-your-pc-
 | `OPENRIG_TERMINAL_BEARER_TOKEN` | unset | Only if your daemon was started with tokens. |
 
 Controls: drag to move, scroll to zoom, right-drag to turn, click an agent (or its row in the list)
-to open it, `Follow` to keep the camera on it, `Esc` to close. The agent panel can be dragged by its
+to open it, `Follow` to keep the camera on it, `Esc` to close. The panel opens on the agent's
+**Terminal** tab; its **Settings** tab lists the agent's parameters (rig, pod, session, runtime,
+model, status, context, work) and lets you change its model, skills and tool rules. The agent panel can be dragged by its
 header and resized from its left, right and bottom edges; double-click the header to put it back.
 
 ## How it works, in short
@@ -72,9 +74,13 @@ server, and the office server only listens on the VPS itself. That is why you ne
 | Needs you | At its desk, orange bubble with the reason, counted in its team's header | It stopped at a question or a permission prompt and will not continue until someone answers in its terminal. |
 | Unknown | Greyed out, in the lounge | OpenRig cannot tell (for example, the session is gone). |
 
-Desks are grouped by pod, each pod with its own shirt colour. The OpenRig `kernel` team (the
-operator and its helpers) has its own glass room. The lounge has a seat for every desk; if more
-agents than that are waiting, the extra ones stand.
+The office is built from the rigs that are running. Every pod gets a bench of its own, exactly as
+many desks as the pod has seats, in its own shirt colour; a pod too big for one bench is split over
+two. Benches fill rows across the open plan, and when a rig grows the office grows towards the open
+front, so the back rooms stay where they are. The OpenRig `kernel` team (the operator and its
+helpers) has its own glass room, with a bench outside it if it has more than eight seats. The lounge
+gets another group of sofas for every 13 agents, so every agent has a seat even when all of them are
+idle. A desk's monitor is lit only while its owner is at it.
 
 The list on the left is grouped by rig, then by pod. The agent whose name ends in `.lead` is marked
 as the team's lead, with a star on its name tag in the office.

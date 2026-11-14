@@ -45,6 +45,13 @@ export interface Zone {
   seats: number;
   /** Reserve this zone for one rig (used for the glass room). */
   preferRig?: string;
+  /** Built for one pod (`podKey`): its members sit here before anywhere else. */
+  pod?: string;
+}
+
+/** How a zone names the pod it was built for. */
+export function podKey(rig: string, pod: string): string {
+  return `${rig}\u0000${pod}`;
 }
 
 export type FurnitureKind =
@@ -75,6 +82,8 @@ export interface Layout {
   lounge: WaitingArea;
   /** Where agents waiting on a pull request sit and talk. */
   review: WaitingArea;
+  /** Framed prints on the walls: where each hangs and which way it faces. */
+  wallArt: Array<{ x: number; z: number; rot: number }>;
 }
 
 export type Posture = 'desk' | 'sofa' | 'chair' | 'stand';
@@ -166,7 +175,7 @@ export function assignSeats(agents: Agent[], layout: Layout): Assignment {
 
   const groups = new Map<string, Agent[]>();
   for (const a of [...agents].sort((p, q) => p.name.localeCompare(q.name) || p.id.localeCompare(q.id))) {
-    const key = `${a.rig}\u0000${a.pod}`;
+    const key = podKey(a.rig, a.pod);
     groups.set(key, [...(groups.get(key) ?? []), a]);
   }
   const ordered = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
@@ -182,11 +191,13 @@ export function assignSeats(agents: Agent[], layout: Layout): Assignment {
   };
   const room = (z: Zone) => free.get(z.id)?.length ?? 0;
 
-  for (const [, members] of ordered) {
+  for (const [key, members] of ordered) {
     const rig = members[0]!.rig;
+    const own = layout.zones.filter((z) => z.pod === key);
     const reserved = layout.zones.filter((z) => z.preferRig === rig);
-    const open = layout.zones.filter((z) => !z.preferRig);
+    const open = layout.zones.filter((z) => !z.preferRig && (!z.pod || z.pod === key));
     const candidates = [
+      ...own,
       ...reserved,
       // An untouched bench first, then any bench the whole pod still fits on, then whatever is left.
       ...open.filter((z) => !used.has(z.id) && room(z) >= members.length),
@@ -319,131 +330,253 @@ function sofaSpots(x: number, z: number, rot = 0): Spot[] {
   }));
 }
 
-const LOUNGE_X = -13.6;
-/** The middle of each group of sofas, back to front. */
-const LOUNGE_GROUPS = [-2.9, 2.5];
+/** The rig whose seats go in the glass room at the back. */
+export const KERNEL_RIG = 'kernel';
 
-/** The default floor plan: back rooms behind glass, benches in the open plan, a lounge down the left side. */
-export function defaultLayout(): Layout {
+/** The building is always this wide; it grows towards the front as rigs grow. */
+const WIDTH = 36;
+/** Depth of the strip of rooms along the back wall. */
+const BACK = 7;
+/** The smallest office: enough for the back rooms, the gym and the janitor's closet. */
+const MIN_DEPTH = 28;
+
+const LOUNGE_X = -13.6;
+const LOUNGE_W = 9;
+/** Distance from the back rooms' glass to the lounge, and from one group of sofas to the next. */
+const LOUNGE_GAP = 1.4;
+const LOUNGE_PITCH = 5.4;
+/** Three sofas and four chairs around each coffee table. */
+const SEATS_PER_GROUP = 13;
+
+/** The open plan runs from the lounge to the gym. */
+const OPEN_LEFT = -8.4;
+const OPEN_RIGHT = 10.6;
+/** Carpet beyond the desks at each end of a bench. */
+export const BENCH_MARGIN = 2.6;
+/** Carpet under a bench, front to back. */
+export const BENCH_CARPET = 5.4;
+const BENCH_GAP = 0.5;
+/** Middle of the first row of benches, measured from the back rooms' glass, and the distance between rows. */
+const FIRST_ROW = 5.3;
+const ROW_PITCH = 7.2;
+const KERNEL_DESKS = 8;
+
+/** Longest bench the open plan has room for, in desks per side. */
+const MAX_PER_ROW = Math.floor((OPEN_RIGHT - OPEN_LEFT - BENCH_MARGIN) / DESK_WIDTH);
+
+const benchWidth = (seats: number) => Math.ceil(seats / 2) * DESK_WIDTH;
+
+/** Cuts `n` seats into benches no longer than the open plan allows, as even in size as possible. */
+function benches(n: number): number[] {
+  const max = MAX_PER_ROW * 2;
+  const count = Math.ceil(n / max);
+  return Array.from({ length: count }, (_, i) => Math.floor(n / count) + (i < n % count ? 1 : 0));
+}
+
+interface BenchPlan {
+  id: string;
+  seats: number;
+  pod?: string;
+  preferRig?: string;
+}
+
+/**
+ * The floor plan for the agents that exist right now. Every pod gets a bench of
+ * its own, exactly as long as the pod is big; the kernel rig sits in the glass
+ * room; the lounge has a seat for every agent. Rows of benches and groups of
+ * sofas are added towards the open front, so a bigger rig makes a deeper office
+ * while the back rooms stay where they are. The plan depends only on who exists
+ * (rig, pod, how many), never on what they are doing.
+ */
+export function buildLayout(agents: Array<Pick<Agent, 'rig' | 'pod'>>): Layout {
   const H = 2.5;
   const wall = (x1: number, z1: number, x2: number, z2: number, kind: WallKind, door?: number, height = H): Wall =>
     ({ x1, z1, x2, z2, kind, height, ...(door === undefined ? {} : { door }) });
 
+  // --- Who needs a desk ---------------------------------------------------------------------
+  const pods = new Map<string, number>();
+  let kernel = 0;
+  for (const a of agents) {
+    if (a.rig === KERNEL_RIG) kernel++;
+    else pods.set(podKey(a.rig, a.pod), (pods.get(podKey(a.rig, a.pod)) ?? 0) + 1);
+  }
+  const plans: BenchPlan[] = [];
+  [...pods.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([pod, n], p) => {
+    benches(n).forEach((seats, i) => plans.push({ id: `pod-${p + 1}${i ? `-${i + 1}` : ''}`, seats, pod }));
+  });
+  // Kernel seats that do not fit in the glass room get a bench outside it, still kept for the kernel.
+  if (kernel > KERNEL_DESKS) {
+    benches(kernel - KERNEL_DESKS).forEach((seats, i) => plans.push({ id: `kernel-${i + 2}`, seats, preferRig: KERNEL_RIG }));
+  }
+
+  // --- Benches into rows, left to right ------------------------------------------------------
+  const rows: BenchPlan[][] = [];
+  const openWidth = OPEN_RIGHT - OPEN_LEFT;
+  const footprint = (b: BenchPlan) => benchWidth(b.seats) + BENCH_MARGIN;
+  for (const plan of plans) {
+    const row = rows.at(-1);
+    const used = row ? row.reduce((w, b) => w + footprint(b) + BENCH_GAP, 0) : Infinity;
+    if (row && used + footprint(plan) <= openWidth) row.push(plan);
+    else rows.push([plan]);
+  }
+
+  // --- How deep the building has to be -------------------------------------------------------
+  const groups = Math.max(2, Math.ceil(agents.length / SEATS_PER_GROUP));
+  const loungeDepth = groups * LOUNGE_PITCH + 0.7;
+  // Past the last sofa: the bookshelf, then the corner plant.
+  const loungeNeeds = BACK + LOUNGE_GAP + loungeDepth + 4;
+  const lastRow = BACK + FIRST_ROW + (rows.length - 1) * ROW_PITCH;
+  // Room in front of the last bench for the reception desk and a walkway.
+  const openNeeds = rows.length ? lastRow + BENCH_CARPET / 2 + 4.6 : BACK + 8;
+  const depth = Math.ceil(Math.max(MIN_DEPTH, loungeNeeds, openNeeds));
+
+  /** z measured from the back wall. */
+  const z0 = -depth / 2;
+  const at = (dz: number) => z0 + dz;
+  const front = at(depth);
+  const glass = at(BACK);
+
+  // --- Zones ---------------------------------------------------------------------------------
+  const zones: Zone[] = [];
+  if (kernel > 0) zones.push({ id: 'kernel', x: 3.5, z: at(3.5), seats: Math.min(kernel, KERNEL_DESKS), preferRig: KERNEL_RIG });
+  rows.forEach((row, r) => {
+    // Spread each row across the open plan with equal space around every bench.
+    const total = row.reduce((w, b) => w + footprint(b), 0);
+    const space = (openWidth - total) / row.length;
+    let x = OPEN_LEFT + space / 2;
+    for (const plan of row) {
+      const w = footprint(plan);
+      zones.push({
+        id: plan.id,
+        x: x + w / 2,
+        z: glass + FIRST_ROW + r * ROW_PITCH,
+        seats: plan.seats,
+        ...(plan.pod ? { pod: plan.pod } : {}),
+        ...(plan.preferRig ? { preferRig: plan.preferRig } : {}),
+      });
+      x += w + space;
+    }
+  });
+  const openEnd = rows.length ? glass + FIRST_ROW + (rows.length - 1) * ROW_PITCH + BENCH_CARPET / 2 : glass + 2;
+  const openMiddle = (OPEN_LEFT + OPEN_RIGHT) / 2;
+
+  // --- Lounge --------------------------------------------------------------------------------
   type Placed = [x: number, z: number, rot: number];
   // A chair's back is on its own +z side, so whoever sits on it faces the way the chair is turned.
   const chairSpot = ([x, z, rot]: Placed): Spot => ({ x, z, rot, posture: 'chair' });
-
-  // Lounge: two groups, each three sofas and four chairs around a coffee table. 26 seats for 24 desks.
-  const loungeSofas: Placed[] = LOUNGE_GROUPS.flatMap((z): Placed[] => [
+  const loungeZ = glass + LOUNGE_GAP;
+  const groupZ = Array.from({ length: groups }, (_, g) => loungeZ + LOUNGE_PITCH / 2 + g * LOUNGE_PITCH);
+  const loungeSofas: Placed[] = groupZ.flatMap((z): Placed[] => [
     [LOUNGE_X, z - 1.9, 0],
     [LOUNGE_X, z + 1.9, Math.PI],
     [LOUNGE_X - 2.6, z, Math.PI / 2],
   ]);
-  const loungeChairs: Placed[] = LOUNGE_GROUPS.flatMap((z) =>
+  const loungeChairs: Placed[] = groupZ.flatMap((z) =>
     [-1.35, -0.45, 0.45, 1.35].map((dz): Placed => [LOUNGE_X + 2.5, z + dz, Math.PI / 2]),
   );
 
-  // PR review: chairs down both sides of the table and beside the sofa, all turned to the middle.
-  const reviewSofa: Placed = [-5, -8.6, Math.PI];
+  // --- PR review -----------------------------------------------------------------------------
+  const reviewSofa: Placed = [-5, at(5.4), Math.PI];
   const reviewChairs: Placed[] = [
-    ...[-11, -10.1, -9.2].flatMap((z): Placed[] => [[-7.2, z, -Math.PI / 2], [-2.8, z, Math.PI / 2]]),
-    [-6.7, -8.4, -0.35],
-    [-3.3, -8.4, 0.35],
+    ...[3, 3.9, 4.8].flatMap((dz): Placed[] => [[-7.2, at(dz), -Math.PI / 2], [-2.8, at(dz), Math.PI / 2]]),
+    [-6.7, at(5.6), -0.35],
+    [-3.3, at(5.6), 0.35],
   ];
 
   return {
-    width: 36,
-    depth: 28,
-    overflow: { x: -1.6, z: 12.6 },
+    width: WIDTH,
+    depth,
+    overflow: { x: openMiddle - 1.6, z: front - 2.4 },
     lounge: {
       spots: [...loungeSofas.flatMap(([x, z, rot]) => sofaSpots(x, z, rot)), ...loungeChairs.map(chairSpot)],
-      standing: { x: -9.9, z: 5.3, perRow: 12, rot: Math.PI / 2 },
+      standing: { x: -9.9, z: loungeZ + loungeDepth - 0.6, perRow: Math.floor(loungeDepth / STAND_PITCH) - 1, rot: Math.PI / 2 },
     },
     review: {
       spots: [...reviewChairs.map(chairSpot), ...sofaSpots(...reviewSofa)],
-      standing: { x: -2.0, z: -12.3, perRow: 8, rot: Math.PI },
+      standing: { x: -2.0, z: at(1.7), perRow: 8, rot: Math.PI },
     },
     rooms: [
-      { id: 'standup', name: 'Standup room', purpose: 'standup', x: -18, z: -14, w: 9, d: 7, floor: 'woodFloor' },
-      { id: 'review', name: 'PR review', purpose: 'review', x: -9, z: -14, w: 8, d: 7, floor: 'carpet', door: { x: -5, z: -7 } },
-      { id: 'kernel', name: 'Kernel', purpose: 'team', x: -1, z: -14, w: 9, d: 7, floor: 'carpet', door: { x: 3.5, z: -7 } },
-      { id: 'qa', name: 'QA lab', purpose: 'qa', x: 8, z: -14, w: 10, d: 7, floor: 'floor' },
-      { id: 'gym', name: 'Gym', purpose: 'gym', x: 11, z: -7, w: 7, d: 9, floor: 'rubber' },
-      { id: 'janitor', name: 'Janitor', purpose: 'janitor', x: 13, z: 2, w: 5, d: 5, floor: 'floor' },
-      { id: 'lounge', name: 'Lounge', purpose: 'lounge', x: -17.5, z: -5.6, w: 9, d: 11.5, floor: 'carpet' },
+      { id: 'standup', name: 'Standup room', purpose: 'standup', x: -18, z: z0, w: 9, d: BACK, floor: 'woodFloor' },
+      { id: 'review', name: 'PR review', purpose: 'review', x: -9, z: z0, w: 8, d: BACK, floor: 'carpet', door: { x: -5, z: glass } },
+      { id: 'kernel', name: 'Kernel', purpose: 'team', x: -1, z: z0, w: 9, d: BACK, floor: 'carpet', door: { x: 3.5, z: glass } },
+      { id: 'qa', name: 'QA lab', purpose: 'qa', x: 8, z: z0, w: 10, d: BACK, floor: 'floor' },
+      { id: 'gym', name: 'Gym', purpose: 'gym', x: 11, z: glass, w: 7, d: 9, floor: 'rubber' },
+      { id: 'janitor', name: 'Janitor', purpose: 'janitor', x: 13, z: at(16), w: 5, d: 5, floor: 'floor' },
+      { id: 'lounge', name: 'Lounge', purpose: 'lounge', x: -17.5, z: loungeZ, w: LOUNGE_W, d: loungeDepth, floor: 'carpet' },
     ],
     walls: [
       // Outer shell: tall and solid at the back and left, glass on the right, open at the front.
-      wall(-18, -14, 18, -14, 'solid', undefined, 3),
-      wall(-18, -14, -18, 14, 'solid', undefined, 3),
-      wall(18, -14, 18, 7, 'glass'),
+      wall(-18, z0, 18, z0, 'solid', undefined, 3),
+      wall(-18, z0, -18, front, 'solid', undefined, 3),
+      wall(18, z0, 18, at(21), 'glass'),
       // Fronts of the back rooms.
-      wall(-18, -7, -9, -7, 'glass', 0.5),
-      wall(-9, -7, -1, -7, 'glass', 0.5),
-      wall(-1, -7, 8, -7, 'glass', 0.5),
-      wall(8, -7, 11, -7, 'glass', 0.5),
-      wall(11, -7, 18, -7, 'solid'),
+      wall(-18, glass, -9, glass, 'glass', 0.5),
+      wall(-9, glass, -1, glass, 'glass', 0.5),
+      wall(-1, glass, 8, glass, 'glass', 0.5),
+      wall(8, glass, 11, glass, 'glass', 0.5),
+      wall(11, glass, 18, glass, 'solid'),
       // Dividers between the back rooms.
-      wall(-9, -14, -9, -7, 'solid'),
-      wall(-1, -14, -1, -7, 'glass'),
-      wall(8, -14, 8, -7, 'solid'),
+      wall(-9, z0, -9, glass, 'solid'),
+      wall(-1, z0, -1, glass, 'glass'),
+      wall(8, z0, 8, glass, 'solid'),
       // Gym and janitor closet.
-      wall(11, -7, 11, 2, 'glass', 0.5),
-      wall(11, 2, 13, 2, 'solid'),
-      wall(13, 2, 18, 2, 'solid'),
-      wall(13, 2, 13, 7, 'solid', 0.5),
-      wall(13, 7, 18, 7, 'solid'),
+      wall(11, glass, 11, at(16), 'glass', 0.5),
+      wall(11, at(16), 13, at(16), 'solid'),
+      wall(13, at(16), 18, at(16), 'solid'),
+      wall(13, at(16), 13, at(21), 'solid', 0.5),
+      wall(13, at(21), 18, at(21), 'solid'),
     ],
-    zones: [
-      { id: 'kernel', x: 3.5, z: -10.5, seats: 4, preferRig: 'kernel' },
-      { id: 'a', x: -5, z: -1.5, seats: 4 },
-      { id: 'b', x: 4.5, z: -1.5, seats: 4 },
-      { id: 'c', x: -5, z: 8, seats: 4 },
-      { id: 'd', x: 4.5, z: 8, seats: 4 },
-      { id: 'e', x: -13.5, z: 9.5, seats: 4 },
-    ],
+    zones,
     furniture: [
       // Standup room
-      { kind: 'meetingTable', x: -13.5, z: -10.3 },
-      { kind: 'whiteboard', x: -13.5, z: -13.85 },
-      { kind: 'plant', x: -17.2, z: -7.8 },
+      { kind: 'meetingTable', x: -13.5, z: at(3.7) },
+      { kind: 'whiteboard', x: -13.5, z: at(0.15) },
+      { kind: 'plant', x: -17.2, z: at(6.2) },
       // PR review
-      { kind: 'screenWall', x: -5, z: -13.85, w: 4.5 },
-      { kind: 'coffeeTable', x: -5, z: -10.5 },
+      { kind: 'screenWall', x: -5, z: at(0.15), w: 4.5 },
+      { kind: 'coffeeTable', x: -5, z: at(3.5) },
       { kind: 'sofa', x: reviewSofa[0], z: reviewSofa[1], rot: reviewSofa[2] },
       ...reviewChairs.map(([x, z, rot]) => ({ kind: 'chair' as const, x, z, rot })),
-      // Kernel
-      { kind: 'plant', x: 7.2, z: -13.2 },
-      { kind: 'bookshelf', x: -0.2, z: -13.6, rot: 0 },
+      // Kernel: desks when the kernel rig is running, a meeting table when it is not.
+      { kind: 'plant', x: 7.2, z: at(0.8) },
+      { kind: 'bookshelf', x: -0.2, z: at(0.4), rot: 0 },
+      ...(kernel > 0 ? [] : [{ kind: 'meetingTable' as const, x: 3.5, z: at(3.5) }]),
       // QA lab
-      { kind: 'serverRack', x: 10, z: -13.4 },
-      { kind: 'serverRack', x: 11.2, z: -13.4 },
-      { kind: 'serverRack', x: 12.4, z: -13.4 },
-      { kind: 'screenWall', x: 15.3, z: -13.85, w: 3.6 },
-      { kind: 'desk', x: 15.3, z: -10.2, rot: Math.PI },
+      { kind: 'serverRack', x: 10, z: at(0.6) },
+      { kind: 'serverRack', x: 11.2, z: at(0.6) },
+      { kind: 'serverRack', x: 12.4, z: at(0.6) },
+      { kind: 'screenWall', x: 15.3, z: at(0.15), w: 3.6 },
+      { kind: 'desk', x: 15.3, z: at(3.8), rot: Math.PI },
       // Gym
-      { kind: 'treadmill', x: 13, z: -4.8 },
-      { kind: 'treadmill', x: 14.6, z: -4.8 },
-      { kind: 'weights', x: 16.8, z: -2 },
-      { kind: 'gymBench', x: 13.6, z: -0.2, rot: Math.PI / 2 },
+      { kind: 'treadmill', x: 13, z: at(9.2) },
+      { kind: 'treadmill', x: 14.6, z: at(9.2) },
+      { kind: 'weights', x: 16.8, z: at(12) },
+      { kind: 'gymBench', x: 13.6, z: at(13.8), rot: Math.PI / 2 },
       // Janitor
-      { kind: 'locker', x: 17.4, z: 3, rot: -Math.PI / 2 },
-      { kind: 'locker', x: 17.4, z: 4.1, rot: -Math.PI / 2 },
-      { kind: 'mopBucket', x: 14.6, z: 5.8 },
+      { kind: 'locker', x: 17.4, z: at(17), rot: -Math.PI / 2 },
+      { kind: 'locker', x: 17.4, z: at(18.1), rot: -Math.PI / 2 },
+      { kind: 'mopBucket', x: 14.6, z: at(19.8) },
       // Lounge
       ...loungeSofas.map(([x, z, rot]) => ({ kind: 'sofa' as const, x, z, rot })),
       ...loungeChairs.map(([x, z, rot]) => ({ kind: 'chair' as const, x, z, rot })),
-      ...LOUNGE_GROUPS.map((z) => ({ kind: 'coffeeTable' as const, x: LOUNGE_X, z })),
-      { kind: 'plant', x: -17.1, z: -5.8 },
-      { kind: 'bookshelf', x: -17.6, z: 3.4, rot: Math.PI / 2 },
+      ...groupZ.map((z) => ({ kind: 'coffeeTable' as const, x: LOUNGE_X, z })),
+      { kind: 'plant', x: -17.1, z: loungeZ - 0.2 },
+      { kind: 'plant', x: -9.2, z: loungeZ + loungeDepth + 0.6 },
+      { kind: 'bookshelf', x: -17.6, z: loungeZ + loungeDepth + 1.4, rot: Math.PI / 2 },
       // Open plan
-      { kind: 'reception', x: -0.3, z: 3.3 },
-      { kind: 'plant', x: -9.6, z: -5.8 },
-      { kind: 'plant', x: 9.6, z: 3.2 },
-      { kind: 'plant', x: -9.4, z: 12.4 },
-      { kind: 'plant', x: 9.4, z: 12.4 },
-      { kind: 'plant', x: -0.3, z: -5.6 },
-      { kind: 'plant', x: -17, z: 13 },
+      { kind: 'reception', x: openMiddle, z: Math.min(openEnd + 2.2, front - 1.6) },
+      { kind: 'plant', x: -9.6, z: glass + 1.2 },
+      { kind: 'plant', x: openMiddle, z: glass + 1.4 },
+      { kind: 'plant', x: -9.4, z: front - 1.6 },
+      { kind: 'plant', x: 9.4, z: front - 1.6 },
+      { kind: 'plant', x: -17, z: front - 1 },
     ],
+    // A print over the side sofa of every lounge group.
+    wallArt: groupZ.map((z) => ({ x: -WIDTH / 2 + 0.09, z, rot: 0 })),
   };
+}
+
+/** The office before anyone has arrived. */
+export function defaultLayout(): Layout {
+  return buildLayout([]);
 }
