@@ -40,8 +40,24 @@
       emissive: style.color,
       emissiveIntensity: style.intensity,
     });
+    // The light the neon throws on the floor: a wide strip that fades out to both sides, added
+    // on top of the floor so it tints it. Brighter where strips cross, as real light would be.
+    const spill = style.spill ?? 0;
+    const spillWidth = style.spillWidth ?? 1.4;
+    const halo = spill > 0
+      ? new THREE.MeshBasicMaterial({
+          color: style.color,
+          map: fadeAcross(),
+          transparent: true,
+          opacity: spill,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: false,
+        })
+      : null;
     const group = new THREE.Group();
     const box = new THREE.BoxGeometry(1, 1, 1);
+    const plane = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     for (const w of store.layout.walkways) {
       const length = Math.hypot(w.x2 - w.x1, w.z2 - w.z1) + NEON_WIDTH;
       const alongX = Math.abs(w.z2 - w.z1) < 1e-6;
@@ -49,16 +65,46 @@
       strip.scale.set(alongX ? length : NEON_WIDTH, 0.008, alongX ? NEON_WIDTH : length);
       strip.position.set((w.x1 + w.x2) / 2, 0.018, (w.z1 + w.z2) / 2);
       group.add(strip);
+      if (halo) {
+        const tint = new THREE.Mesh(plane, halo);
+        // The texture fades across its width (u), so a strip along z is turned a quarter.
+        tint.scale.set(length + spillWidth * 0.3, 1, spillWidth);
+        if (!alongX) tint.rotation.y = Math.PI / 2;
+        tint.position.set((w.x1 + w.x2) / 2, 0.012, (w.z1 + w.z2) / 2);
+        tint.renderOrder = 1;
+        group.add(tint);
+      }
     }
-    return { group, material, box };
+    return { group, material, halo, box, plane };
   });
   $effect(() => {
     const old = neon;
     return () => {
       old?.material.dispose();
+      old?.halo?.map?.dispose();
+      old?.halo?.dispose();
       old?.box.dispose();
+      old?.plane.dispose();
     };
   });
+  /** A small texture bright along its middle line and fading to nothing at its top and bottom edges. */
+  function fadeAcross(): THREE.Texture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 4;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d')!;
+    const fade = ctx.createLinearGradient(0, 0, 0, 64);
+    fade.addColorStop(0, 'rgba(255,255,255,0)');
+    fade.addColorStop(0.35, 'rgba(255,255,255,0.35)');
+    fade.addColorStop(0.5, 'rgba(255,255,255,1)');
+    fade.addColorStop(0.65, 'rgba(255,255,255,0.35)');
+    fade.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = fade;
+    ctx.fillRect(0, 0, 4, 64);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
 
   // --- Screens that light the room (themes with `lighting.screenGlow`) -----------------------
   const glow = $derived(store.theme.lighting.screenGlow ?? null);
@@ -264,7 +310,7 @@
     font: 700 10px/1 system-ui, sans-serif;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--muted);
+    color: var(--label, var(--muted));
     white-space: nowrap;
     user-select: none;
     opacity: 0.85;
