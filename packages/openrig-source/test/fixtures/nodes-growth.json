@@ -1,0 +1,330 @@
+[
+ {
+  "nodeId": "01M78VSCG9ZE6SH7H7BD31H861",
+  "rigId": "01M78VSCAASSX9C54RCB8QFRS5",
+  "rigName": "growth",
+  "logicalId": "orch.lead",
+  "podId": "01M78VSCAJNFXDMJZ65N31B3XQ",
+  "podNamespace": "orch",
+  "canonicalSessionName": "orch-lead@growth",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "running",
+   "reason": "mid_work_pattern",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:23.292Z"
+  },
+  "activityState": {
+   "activity": "idle-at-prompt",
+   "display": "idle",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "self-report",
+   "seq": 48,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T08:02:22.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 3,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 3,
+  "contextUsage": {
+   "availability": "unknown",
+   "usedPercentage": null
+  }
+ },
+ {
+  "nodeId": "01M78VSKQ4K42YPK5RBFV41KB1",
+  "rigId": "01M78VSCAASSX9C54RCB8QFRS5",
+  "rigName": "growth",
+  "logicalId": "build.demo",
+  "podId": "01M78VSCAN91MT59940XSYYWE3",
+  "podNamespace": "build",
+  "canonicalSessionName": "build-demo@growth",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "needs_input",
+   "reason": "selection_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:19.300Z"
+  },
+  "activityState": {
+   "activity": "working",
+   "display": "needs-input",
+   "needsInput": {
+    "count": 1,
+    "reason": "permission_prompt"
+   },
+   "decidedBy": "self-report",
+   "seq": 5,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:01.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 1,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 1,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 14
+  }
+ },
+ {
+  "nodeId": "01M78VSTCZ7CMY1YZHNREFRBR3",
+  "rigId": "01M78VSCAASSX9C54RCB8QFRS5",
+  "rigName": "growth",
+  "logicalId": "build.site",
+  "podId": "01M78VSCAN91MT59940XSYYWE3",
+  "podNamespace": "build",
+  "canonicalSessionName": "build-site@growth",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "idle",
+   "reason": "idle_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:22.273Z"
+  },
+  "activityState": {
+   "activity": "idle-at-prompt",
+   "display": "idle",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "self-report",
+   "seq": 10,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:04.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 0,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 0
+  }
+ },
+ {
+  "nodeId": "01M78VT6Z6PC8KMRPEZCFERK4A",
+  "rigId": "01M78VSCAASSX9C54RCB8QFRS5",
+  "rigName": "growth",
+  "logicalId": "market.offer",
+  "podId": "01M78VSCAKKCMNMAC24WKRR6Y8",
+  "podNamespace": "market",
+  "canonicalSessionName": "market-offer@growth",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "idle",
+   "reason": "idle_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:20.300Z"
+  },
+  "activityState": {
+   "activity": "idle-at-prompt",
+   "display": "idle",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "self-report",
+   "seq": 6,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:03.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 0,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 15
+  }
+ },
+ {
+  "nodeId": "01M78VTJEZMNDWS20Y16BDRFS8",
+  "rigId": "01M78VSCAASSX9C54RCB8QFRS5",
+  "rigName": "growth",
+  "logicalId": "market.scout",
+  "podId": "01M78VSCAKKCMNMAC24WKRR6Y8",
+  "podNamespace": "market",
+  "canonicalSessionName": "market-scout@growth",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "idle",
+   "reason": "idle_status_bar",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:20.300Z"
+  },
+  "activityState": {
+   "activity": "idle-at-prompt",
+   "display": "idle",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "self-report",
+   "seq": 8,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:03.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 0,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 0
+  }
+ },
+ {
+  "nodeId": "01M78VTSKQCAHCHZ2YW1VSNDSM",
+  "rigId": "01M78VSCAASSX9C54RCB8QFRS5",
+  "rigName": "growth",
+  "logicalId": "reach.audit",
+  "podId": "01M78VSCAN8PANRHZSRKGDRKGV",
+  "podNamespace": "reach",
+  "canonicalSessionName": "reach-audit@growth",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "needs_input",
+   "reason": "selection_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:19.300Z"
+  },
+  "activityState": {
+   "activity": "working",
+   "display": "needs-input",
+   "needsInput": {
+    "count": 1,
+    "reason": "permission_prompt"
+   },
+   "decidedBy": "self-report",
+   "seq": 5,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:01.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 1,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 1,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 8
+  }
+ },
+ {
+  "nodeId": "01M78VV0RGS6P7PAF7APNSX6RX",
+  "rigId": "01M78VSCAASSX9C54RCB8QFRS5",
+  "rigName": "growth",
+  "logicalId": "reach.buyer",
+  "podId": "01M78VSCAN8PANRHZSRKGDRKGV",
+  "podNamespace": "reach",
+  "canonicalSessionName": "reach-buyer@growth",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "needs_input",
+   "reason": "selection_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:23.292Z"
+  },
+  "activityState": {
+   "activity": "working",
+   "display": "needs-input",
+   "needsInput": {
+    "count": 1,
+    "reason": "permission_prompt"
+   },
+   "decidedBy": "self-report",
+   "seq": 5,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T08:02:22.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 1,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 1,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 17
+  }
+ },
+ {
+  "nodeId": "01M78VV8T5MWDRRN53KG193DRH",
+  "rigId": "01M78VSCAASSX9C54RCB8QFRS5",
+  "rigName": "growth",
+  "logicalId": "reach.writer",
+  "podId": "01M78VSCAN8PANRHZSRKGDRKGV",
+  "podNamespace": "reach",
+  "canonicalSessionName": "reach-writer@growth",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "idle",
+   "reason": "idle_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:20.300Z"
+  },
+  "activityState": {
+   "activity": "idle-at-prompt",
+   "display": "idle",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "self-report",
+   "seq": 1,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:02.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 0,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 6
+  }
+ }
+]

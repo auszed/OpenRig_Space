@@ -1,0 +1,167 @@
+[
+ {
+  "nodeId": "01M78QNA4E8P1096GYPGAZRFWM",
+  "rigId": "01M78QN9ZZ5PVAN04CGME719XN",
+  "rigName": "kernel",
+  "logicalId": "advisor.lead",
+  "podId": "01M78QNA03SC4KK8FN0539G8AQ",
+  "podNamespace": "advisor",
+  "canonicalSessionName": "advisor-lead@kernel",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "idle",
+   "reason": "idle_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:20.300Z"
+  },
+  "activityState": {
+   "activity": "idle-at-prompt",
+   "display": "idle",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "self-report",
+   "seq": 1,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:03.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 0,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 6
+  }
+ },
+ {
+  "nodeId": "01M78QP8MBQ2E25XNWP8S8VMH6",
+  "rigId": "01M78QN9ZZ5PVAN04CGME719XN",
+  "rigName": "kernel",
+  "logicalId": "operator.agent",
+  "podId": "01M78QNA03AW3JNWKS74ZX49T3",
+  "podNamespace": "operator",
+  "canonicalSessionName": "operator-agent@kernel",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "idle",
+   "reason": "idle_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:20.300Z"
+  },
+  "activityState": {
+   "activity": "idle-at-prompt",
+   "display": "idle",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "self-report",
+   "seq": 1,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:03.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 0,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 7
+  }
+ },
+ {
+  "nodeId": "01M78QQ6XSAJQY09D838YTQ7KA",
+  "rigId": "01M78QN9ZZ5PVAN04CGME719XN",
+  "rigName": "kernel",
+  "logicalId": "operator.human",
+  "podId": "01M78QNA03AW3JNWKS74ZX49T3",
+  "podNamespace": "operator",
+  "canonicalSessionName": "operator-human@kernel",
+  "nodeKind": "infrastructure",
+  "runtime": "terminal",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "running",
+  "agentActivity": {
+   "state": "running",
+   "reason": "window_activity_motion",
+   "evidenceSource": "terminal_activity",
+   "sampledAt": "2026-11-14T08:02:23.048Z",
+   "runtime": "terminal"
+  },
+  "activityState": {
+   "activity": "working",
+   "display": "working",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "window-sampling",
+   "seq": 3,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T08:02:22.000Z",
+  "needsAttention": false,
+  "assignedWorkCount": 0,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "unknown",
+   "usedPercentage": null
+  }
+ },
+ {
+  "nodeId": "01M78QQ7KBW9GQ3FCXVEN0JSJP",
+  "rigId": "01M78QN9ZZ5PVAN04CGME719XN",
+  "rigName": "kernel",
+  "logicalId": "queue.worker",
+  "podId": "01M78QNA04GZ6GEDS5F1S5ZWXJ",
+  "podNamespace": "queue",
+  "canonicalSessionName": "queue-worker@kernel",
+  "nodeKind": "agent",
+  "runtime": "claude-code",
+  "model": null,
+  "sessionStatus": "running",
+  "lifecycleState": "attention_required",
+  "agentActivity": {
+   "state": "idle",
+   "reason": "idle_prompt",
+   "evidenceSource": "pane_heuristic",
+   "sampledAt": "2026-11-14T08:02:20.300Z"
+  },
+  "activityState": {
+   "activity": "idle-at-prompt",
+   "display": "idle",
+   "needsInput": {
+    "count": 0,
+    "reason": null
+   },
+   "decidedBy": "self-report",
+   "seq": 1,
+   "lastSwap": null
+  },
+  "lastActivityAt": "2026-11-14T07:38:03.000Z",
+  "needsAttention": true,
+  "assignedWorkCount": 0,
+  "pendingWorkCount": 0,
+  "inProgressWorkCount": 0,
+  "blockedWorkCount": 0,
+  "contextUsage": {
+   "availability": "known",
+   "usedPercentage": 6
+  }
+ }
+]

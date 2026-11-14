@@ -1,0 +1,61 @@
+import type { OfficeTheme } from '@backoffice/core';
+
+const m = (color: string, roughness = 0.8, metalness = 0) => ({ color, roughness, metalness });
+
+/** Bright studio office: white walls, glass, pale wood, orange accents on dark carpet. */
+export const studioTheme: OfficeTheme = {
+  id: 'studio',
+  name: 'Studio',
+  ui: {
+    'panel': 'rgba(255, 255, 255, 0.92)',
+    'panel-solid': '#ffffff',
+    'text': '#1f2328',
+    'muted': '#667085',
+    'border': 'rgba(31, 35, 40, 0.12)',
+    'accent': '#f07a1a',
+    'accent-text': '#ffffff',
+    'screen-bg': '#16181d',
+    'screen-text': '#d7dce3',
+    'shadow': '0 8px 30px rgba(31, 35, 40, 0.14)',
+  },
+  background: '#dfe8ee',
+  materials: {
+    floor: m('#ecebe7', 0.55),
+    carpet: m('#5a5d63', 0.95),
+    woodFloor: m('#d2b48a', 0.6),
+    rubber: m('#3b3e44', 0.9),
+    wall: m('#f6f5f2', 0.9),
+    glass: { color: '#d4e9f2', roughness: 0.05, metalness: 0, opacity: 0.22 },
+    frame: m('#fbfbfb', 0.4, 0.3),
+    wood: m('#dcbf94', 0.55),
+    fabric: m('#f07a1a', 0.9),
+    accent: m('#f07a1a', 0.6),
+    metal: m('#b8bcc4', 0.35, 0.8),
+    dark: m('#2a2c31', 0.6),
+    white: m('#fafafa', 0.5),
+    screenOff: m('#14161a', 0.25, 0.2),
+    screenOn: { color: '#0d1b2a', roughness: 0.3, metalness: 0, emissive: '#9fd2ff', emissiveIntensity: 1.1 },
+    plant: m('#3f8f4a', 0.8),
+    pot: m('#f4f4f2', 0.5),
+    grass: m('#9cc47a', 1),
+    path: m('#dcd8cf', 0.9),
+    plinth: m('#c9c7c1', 0.85),
+    trunk: m('#7b5b3c', 0.9),
+    foliage: m('#5fa052', 0.9),
+    building: m('#eef0f1', 0.7),
+    skin: m('#f0c8a4', 0.7),
+    hair: m('#3a2c24', 0.8),
+  },
+  podColors: ['#f07a1a', '#2f80ed', '#27ae60', '#9b51e0', '#eb5757', '#00a3a3', '#b7791f', '#56606e'],
+  status: { working: '#27ae60', idle: '#98a2b3', 'needs-input': '#f07a1a', unknown: '#c4c9d2' },
+  lighting: {
+    sun: { color: '#fff4e2', intensity: 2.6, position: [-22, 34, 18] },
+    sky: { color: '#ffffff', ground: '#cfd6dc', intensity: 0.75 },
+    environment: 0.55,
+  },
+  postFx: {
+    bloom: { intensity: 0.35, threshold: 0.9 },
+    ambientOcclusion: { enabled: true, intensity: 2.2, radius: 1.6 },
+    vignette: 0.25,
+  },
+};
