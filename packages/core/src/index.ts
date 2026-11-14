@@ -5,3 +5,4 @@ export * from './theme.ts';
 export * from './behavior.ts';
 export * from './mock.ts';
 export * from './prompt.ts';
+export * from './settings.ts';

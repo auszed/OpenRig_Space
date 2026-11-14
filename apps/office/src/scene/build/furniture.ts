@@ -159,8 +159,11 @@ const bookshelf: FurnitureBuilder = (kit, item) => {
   return kit.group(...parts);
 };
 
+const looseChair: FurnitureBuilder = (kit) => chair(kit, 0, 0);
+
 /** The built-in furniture. A theme may replace any entry through `theme.furniture`. */
 export const defaultFurniture: Record<FurnitureKind, FurnitureBuilder> = {
   desk, benchDivider, sofa, coffeeTable, plant, meetingTable, whiteboard, screenWall,
   serverRack, treadmill, weights, gymBench, locker, mopBucket, reception, bookshelf,
+  chair: looseChair,
 };

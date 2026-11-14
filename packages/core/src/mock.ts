@@ -46,6 +46,11 @@ export class MockSource implements OfficeSource {
           from: this.agents[0]!.session, to: this.agents[2]!.session, priority: 'routine',
           blockedOn: null, updatedAt: new Date(0).toISOString(),
         },
+        {
+          id: 'mock-q2', summary: 'PR #42: smoke tests for the login form', state: 'pending',
+          from: this.agents[3]!.session, to: this.agents[4]!.session, priority: 'routine',
+          blockedOn: 'review', updatedAt: new Date(0).toISOString(),
+        },
       ],
       health: { ok: true, message: null },
     };

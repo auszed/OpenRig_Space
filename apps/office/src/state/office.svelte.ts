@@ -1,6 +1,6 @@
 import {
-  assignSeats, byAttention, defaultLayout, emptySnapshot,
-  type Agent, type Layout, type OfficeSnapshot, type OfficeTheme, type QueueItem, type Seat,
+  assignSeats, byAttention, defaultLayout, emptySnapshot, groupByTeam, litDesks, locateAgents, whereabouts,
+  type Agent, type AgentSettings, type Layout, type OfficeSnapshot, type OfficeTheme, type QueueItem, type Seat, type SettingsPatch, type SettingsSaved, type TeamGroup, type Whereabouts,
 } from '@backoffice/core';
 import type { FurnitureBuilder } from '../scene/build/kit.ts';
 import { themeById } from '../themes.ts';
@@ -27,7 +27,14 @@ export class OfficeStore {
   theme: OfficeTheme<FurnitureBuilder> = $derived(themeById(this.themeId));
   agents: Agent[] = $derived([...this.snapshot.agents].sort(byAttention));
   private assignment = $derived(assignSeats(this.snapshot.agents, this.layout));
-  seats: Map<string, Seat> = $derived(this.assignment.seats);
+  /** The desk each agent owns. */
+  home: Map<string, Seat> = $derived(this.assignment.seats);
+  /** Where each agent is right now: its desk, the lounge or the review room. */
+  seats: Map<string, Seat> = $derived(locateAgents(this.snapshot.agents, this.snapshot.queue, this.layout, this.home));
+  litDesks: Set<string> = $derived(litDesks(this.snapshot.agents, this.snapshot.queue, this.home));
+  teams: TeamGroup[] = $derived(groupByTeam(this.snapshot.agents));
+  /** Where each character is drawn this frame, written by the characters as they walk. Not reactive. */
+  readonly live = new Map<string, { x: number; z: number }>();
   zoneLabels: Map<string, string[]> = $derived(this.assignment.zoneLabels);
   selected: Agent | null = $derived(this.snapshot.agents.find((a) => a.id === this.selectedId) ?? null);
   waiting: number = $derived(this.snapshot.agents.filter((a) => a.status === 'needs-input').length);
@@ -44,6 +51,10 @@ export class OfficeStore {
 
   colorOf(agent: Agent): string {
     return this.podColor.get(`${agent.rig}/${agent.pod}`) ?? this.theme.podColors[0]!;
+  }
+
+  whereIs(agent: Agent): Whereabouts {
+    return whereabouts(agent, this.snapshot.queue);
   }
 
   tasksFor(agent: Agent): QueueItem[] {
@@ -111,6 +122,24 @@ export class OfficeStore {
       const body = await res.json().catch(() => ({}));
       throw new Error(body.error ?? `Message not sent (${res.status})`);
     }
+  }
+
+  async readSettings(agentId: string): Promise<AgentSettings> {
+    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/settings`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? `Settings unavailable (${res.status})`);
+    return body;
+  }
+
+  async saveSettings(agentId: string, patch: SettingsPatch): Promise<SettingsSaved> {
+    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? `Settings not saved (${res.status})`);
+    return body;
   }
 
   /** Presses the digit of one choice in the question the agent is stopped at. */

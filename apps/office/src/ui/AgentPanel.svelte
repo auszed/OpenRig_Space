@@ -1,6 +1,7 @@
 <script lang="ts">
   import { parsePromptOptions, reasonLabel, type Agent, type PromptOption } from '@backoffice/core';
   import type { OfficeStore } from '../state/office.svelte.ts';
+  import AgentSettings from './AgentSettings.svelte';
 
   let { store, agent }: { store: OfficeStore; agent: Agent } = $props();
 
@@ -9,6 +10,8 @@
   const following = $derived(store.followId === agent.id);
   // The agent object is replaced on every update; its id is what the panel is really about.
   const agentId = $derived(agent.id);
+
+  let showSettings = $state(false);
 
   let screen = $state('');
   let screenError = $state<string | null>(null);
@@ -187,12 +190,18 @@
       <h2>{agent.name}</h2>
       <p>{agent.rig} · {agent.pod} · {agent.runtime}{agent.model ? ` · ${agent.model}` : ''}</p>
     </div>
+    <button class="ghost" aria-pressed={showSettings} onclick={() => (showSettings = !showSettings)}>Settings</button>
     <button class="ghost" aria-pressed={following} onclick={() => store.toggleFollow(agent.id)}>
       {following ? 'Following' : 'Follow'}
     </button>
     <button class="ghost" aria-label="Close" onclick={() => store.select(null)}>✕</button>
   </div>
 
+  {#if showSettings}
+    {#key agentId}
+      <AgentSettings {store} {agent} onclose={() => (showSettings = false)} />
+    {/key}
+  {:else}
   <p class="status">
     <i style:background={store.theme.status[agent.status]}></i>
     <strong>{LABEL[agent.status]}</strong>
@@ -270,6 +279,7 @@
       <button class="primary" disabled={sending || !draft.trim()}>{sending ? 'Sending…' : 'Send'}</button>
     </div>
   </form>
+  {/if}
  </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="grip l" onpointerdown={(e) => startDrag(e, 'l')}></div>

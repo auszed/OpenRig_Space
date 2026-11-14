@@ -1,4 +1,5 @@
-import type { Agent } from './model.ts';
+import { behaviorFor, whereabouts } from './behavior.ts';
+import type { Agent, QueueItem } from './model.ts';
 
 /**
  * The floor plan as data. Units are metres; x runs left to right, z runs from
@@ -20,6 +21,8 @@ export interface Room {
   w: number;
   d: number;
   floor: FloorKind;
+  /** Middle of the doorway, for rooms agents walk in and out of. */
+  door?: { x: number; z: number };
 }
 
 export interface Wall {
@@ -47,7 +50,7 @@ export interface Zone {
 export type FurnitureKind =
   | 'desk' | 'benchDivider' | 'sofa' | 'coffeeTable' | 'plant' | 'meetingTable' | 'whiteboard'
   | 'screenWall' | 'serverRack' | 'treadmill' | 'weights' | 'gymBench' | 'locker' | 'mopBucket'
-  | 'reception' | 'bookshelf';
+  | 'reception' | 'bookshelf' | 'chair';
 
 export interface FurnitureItem {
   kind: FurnitureKind;
@@ -68,6 +71,26 @@ export interface Layout {
   furniture: FurnitureItem[];
   /** Where agents stand when every desk is taken. */
   overflow: { x: number; z: number };
+  /** Where idle agents wait. */
+  lounge: WaitingArea;
+  /** Where agents waiting on a pull request sit and talk. */
+  review: WaitingArea;
+}
+
+export type Posture = 'desk' | 'sofa' | 'chair' | 'stand';
+
+/** One place to sit away from a desk. */
+export interface Spot {
+  x: number;
+  z: number;
+  rot: number;
+  posture: Posture;
+}
+
+export interface WaitingArea {
+  spots: Spot[];
+  /** Where the people without a seat stand: first place, how many side by side, which way they face. */
+  standing: { x: number; z: number; perRow: number; rot: number };
 }
 
 export interface Desk {
@@ -83,8 +106,10 @@ export interface Seat {
   x: number;
   z: number;
   rot: number;
+  /** The desk the agent is sitting at right now, or null when it is somewhere else. */
   deskId: string | null;
   zoneId: string | null;
+  posture: Posture;
 }
 
 export const DESK_WIDTH = 1.7;
@@ -118,6 +143,7 @@ export function seatAtDesk(desk: Desk): Seat {
     rot: desk.rot,
     deskId: desk.id,
     zoneId: desk.zoneId,
+    posture: 'desk',
   };
 }
 
@@ -128,7 +154,7 @@ export interface Assignment {
 }
 
 /**
- * Gives every agent a place. Pods stay together, each pod gets its own bench
+ * Gives every agent a home desk. Pods stay together, each pod gets its own bench
  * while benches last, and the result depends only on who exists (not on what
  * they are doing), so nobody changes desk when a status changes.
  */
@@ -177,6 +203,7 @@ export function assignSeats(agents: Agent[], layout: Layout): Assignment {
           rot: 0,
           deskId: null,
           zoneId: null,
+          posture: 'stand',
         });
       }
     }
@@ -184,24 +211,166 @@ export function assignSeats(agents: Agent[], layout: Layout): Assignment {
   return { seats, zoneLabels };
 }
 
-/** The default floor plan: back rooms behind glass, benches in the open plan, a lounge on the left. */
+const STAND_PITCH = 0.9;
+
+/**
+ * Where every agent is right now. `home` is the desk each one owns
+ * (`assignSeats`); an agent is only at it while `whereabouts` says so, and
+ * otherwise takes a seat in the lounge or the review room. Each agent keeps
+ * the same waiting seat while the same people exist, and whoever does not fit
+ * stands.
+ */
+export function locateAgents(agents: Agent[], queue: QueueItem[], layout: Layout, home: Map<string, Seat>): Map<string, Seat> {
+  const ranked = [...agents].sort(
+    (a, b) => a.rig.localeCompare(b.rig) || a.pod.localeCompare(b.pod) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+  );
+  const seats = new Map<string, Seat>();
+  const waiting: Record<'lounge' | 'review', Array<{ agent: Agent; rank: number }>> = { lounge: [], review: [] };
+
+  ranked.forEach((agent, rank) => {
+    const where = whereabouts(agent, queue);
+    const desk = home.get(agent.id);
+    if (where === 'desk') {
+      if (desk) seats.set(agent.id, desk);
+    } else {
+      waiting[where].push({ agent, rank });
+    }
+  });
+
+  for (const where of ['lounge', 'review'] as const) {
+    const area = layout[where];
+    const taken = new Set<number>();
+    const late: Agent[] = [];
+    for (const { agent, rank } of waiting[where]) {
+      if (rank < area.spots.length) {
+        taken.add(rank);
+        seats.set(agent.id, { ...area.spots[rank]!, deskId: null, zoneId: null });
+      } else {
+        late.push(agent);
+      }
+    }
+    let standing = 0;
+    for (const agent of late) {
+      const free = area.spots.findIndex((_, i) => !taken.has(i));
+      if (free >= 0) {
+        taken.add(free);
+        seats.set(agent.id, { ...area.spots[free]!, deskId: null, zoneId: null });
+        continue;
+      }
+      const { x, z, perRow, rot } = area.standing;
+      // Rows run across the way people face, and stack up behind the first one.
+      const along = (standing % perRow) * STAND_PITCH;
+      const back = Math.floor(standing / perRow) * STAND_PITCH;
+      seats.set(agent.id, {
+        x: x + Math.cos(rot) * along + Math.sin(rot) * back,
+        z: z - Math.sin(rot) * along + Math.cos(rot) * back,
+        rot,
+        deskId: null,
+        zoneId: null,
+        posture: 'stand',
+      });
+      standing++;
+    }
+  }
+  return seats;
+}
+
+/** The desks whose screen is lit: the owner is at it and has something on it. */
+export function litDesks(agents: Agent[], queue: QueueItem[], home: Map<string, Seat>): Set<string> {
+  const lit = new Set<string>();
+  for (const agent of agents) {
+    const deskId = home.get(agent.id)?.deskId;
+    if (deskId && whereabouts(agent, queue) === 'desk' && behaviorFor(agent).screenOn) lit.add(deskId);
+  }
+  return lit;
+}
+
+/**
+ * The corners to walk through to get from one point to another: out of the
+ * door of the room being left, in at the door of the room being entered.
+ */
+export function route(from: { x: number; z: number }, to: { x: number; z: number }, layout: Layout): Array<{ x: number; z: number }> {
+  const roomAt = (p: { x: number; z: number }) =>
+    layout.rooms.find((r) => r.door && p.x > r.x && p.x < r.x + r.w && p.z > r.z && p.z < r.z + r.d);
+  const [a, b] = [roomAt(from), roomAt(to)];
+  if (a === b) return [to];
+  const through = (room: Room): [inside: { x: number; z: number }, outside: { x: number; z: number }] => {
+    const door = room.door!;
+    const onZ = Math.abs(door.z - room.z) < 0.01 || Math.abs(door.z - (room.z + room.d)) < 0.01;
+    const sign = onZ ? Math.sign(room.z + room.d / 2 - door.z) : Math.sign(room.x + room.w / 2 - door.x);
+    const at = (d: number) => (onZ ? { x: door.x, z: door.z + sign * d } : { x: door.x + sign * d, z: door.z });
+    return [at(0.7), at(-0.7)];
+  };
+  const path: Array<{ x: number; z: number }> = [];
+  if (a) path.push(...through(a));
+  if (b) path.push(...through(b).reverse());
+  return [...path, to];
+}
+
+const SOFA_SEATS = [-0.62, 0, 0.62];
+
+/** The three places on a sofa. A sofa looks along its own +z; whoever sits on it looks the same way. */
+function sofaSpots(x: number, z: number, rot = 0): Spot[] {
+  return SOFA_SEATS.map((lx) => ({
+    x: x + lx * Math.cos(rot) + 0.05 * Math.sin(rot),
+    z: z - lx * Math.sin(rot) + 0.05 * Math.cos(rot),
+    rot: rot + Math.PI,
+    posture: 'sofa' as const,
+  }));
+}
+
+const LOUNGE_X = -13.6;
+/** The middle of each group of sofas, back to front. */
+const LOUNGE_GROUPS = [-2.9, 2.5];
+
+/** The default floor plan: back rooms behind glass, benches in the open plan, a lounge down the left side. */
 export function defaultLayout(): Layout {
   const H = 2.5;
   const wall = (x1: number, z1: number, x2: number, z2: number, kind: WallKind, door?: number, height = H): Wall =>
     ({ x1, z1, x2, z2, kind, height, ...(door === undefined ? {} : { door }) });
 
+  type Placed = [x: number, z: number, rot: number];
+  // A chair's back is on its own +z side, so whoever sits on it faces the way the chair is turned.
+  const chairSpot = ([x, z, rot]: Placed): Spot => ({ x, z, rot, posture: 'chair' });
+
+  // Lounge: two groups, each three sofas and four chairs around a coffee table. 26 seats for 24 desks.
+  const loungeSofas: Placed[] = LOUNGE_GROUPS.flatMap((z): Placed[] => [
+    [LOUNGE_X, z - 1.9, 0],
+    [LOUNGE_X, z + 1.9, Math.PI],
+    [LOUNGE_X - 2.6, z, Math.PI / 2],
+  ]);
+  const loungeChairs: Placed[] = LOUNGE_GROUPS.flatMap((z) =>
+    [-1.35, -0.45, 0.45, 1.35].map((dz): Placed => [LOUNGE_X + 2.5, z + dz, Math.PI / 2]),
+  );
+
+  // PR review: chairs down both sides of the table and beside the sofa, all turned to the middle.
+  const reviewSofa: Placed = [-5, -8.6, Math.PI];
+  const reviewChairs: Placed[] = [
+    ...[-11, -10.1, -9.2].flatMap((z): Placed[] => [[-7.2, z, -Math.PI / 2], [-2.8, z, Math.PI / 2]]),
+    [-6.7, -8.4, -0.35],
+    [-3.3, -8.4, 0.35],
+  ];
+
   return {
     width: 36,
     depth: 28,
-    overflow: { x: -15, z: 4 },
+    overflow: { x: -1.6, z: 12.6 },
+    lounge: {
+      spots: [...loungeSofas.flatMap(([x, z, rot]) => sofaSpots(x, z, rot)), ...loungeChairs.map(chairSpot)],
+      standing: { x: -9.9, z: 5.3, perRow: 12, rot: Math.PI / 2 },
+    },
+    review: {
+      spots: [...reviewChairs.map(chairSpot), ...sofaSpots(...reviewSofa)],
+      standing: { x: -2.0, z: -12.3, perRow: 8, rot: Math.PI },
+    },
     rooms: [
       { id: 'standup', name: 'Standup room', purpose: 'standup', x: -18, z: -14, w: 9, d: 7, floor: 'woodFloor' },
-      { id: 'review', name: 'PR review', purpose: 'review', x: -9, z: -14, w: 8, d: 7, floor: 'carpet' },
-      { id: 'kernel', name: 'Kernel', purpose: 'team', x: -1, z: -14, w: 9, d: 7, floor: 'carpet' },
+      { id: 'review', name: 'PR review', purpose: 'review', x: -9, z: -14, w: 8, d: 7, floor: 'carpet', door: { x: -5, z: -7 } },
+      { id: 'kernel', name: 'Kernel', purpose: 'team', x: -1, z: -14, w: 9, d: 7, floor: 'carpet', door: { x: 3.5, z: -7 } },
       { id: 'qa', name: 'QA lab', purpose: 'qa', x: 8, z: -14, w: 10, d: 7, floor: 'floor' },
       { id: 'gym', name: 'Gym', purpose: 'gym', x: 11, z: -7, w: 7, d: 9, floor: 'rubber' },
       { id: 'janitor', name: 'Janitor', purpose: 'janitor', x: 13, z: 2, w: 5, d: 5, floor: 'floor' },
-      { id: 'lounge', name: 'Lounge', purpose: 'lounge', x: -17, z: -4.5, w: 8, d: 7, floor: 'carpet' },
+      { id: 'lounge', name: 'Lounge', purpose: 'lounge', x: -17.5, z: -5.6, w: 9, d: 11.5, floor: 'carpet' },
     ],
     walls: [
       // Outer shell: tall and solid at the back and left, glass on the right, open at the front.
@@ -241,7 +410,8 @@ export function defaultLayout(): Layout {
       // PR review
       { kind: 'screenWall', x: -5, z: -13.85, w: 4.5 },
       { kind: 'coffeeTable', x: -5, z: -10.5 },
-      { kind: 'sofa', x: -5, z: -8.6, rot: Math.PI },
+      { kind: 'sofa', x: reviewSofa[0], z: reviewSofa[1], rot: reviewSofa[2] },
+      ...reviewChairs.map(([x, z, rot]) => ({ kind: 'chair' as const, x, z, rot })),
       // Kernel
       { kind: 'plant', x: 7.2, z: -13.2 },
       { kind: 'bookshelf', x: -0.2, z: -13.6, rot: 0 },
@@ -261,10 +431,9 @@ export function defaultLayout(): Layout {
       { kind: 'locker', x: 17.4, z: 4.1, rot: -Math.PI / 2 },
       { kind: 'mopBucket', x: 14.6, z: 5.8 },
       // Lounge
-      { kind: 'sofa', x: -13, z: -2.9 },
-      { kind: 'sofa', x: -13, z: 0.9, rot: Math.PI },
-      { kind: 'sofa', x: -15.6, z: -1, rot: Math.PI / 2 },
-      { kind: 'coffeeTable', x: -13, z: -1 },
+      ...loungeSofas.map(([x, z, rot]) => ({ kind: 'sofa' as const, x, z, rot })),
+      ...loungeChairs.map(([x, z, rot]) => ({ kind: 'chair' as const, x, z, rot })),
+      ...LOUNGE_GROUPS.map((z) => ({ kind: 'coffeeTable' as const, x: LOUNGE_X, z })),
       { kind: 'plant', x: -17.1, z: -5.8 },
       { kind: 'bookshelf', x: -17.6, z: 3.4, rot: Math.PI / 2 },
       // Open plan
