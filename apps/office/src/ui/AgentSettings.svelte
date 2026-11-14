@@ -2,7 +2,27 @@
   import { MODEL_CHOICES, type Agent, type AgentSettings } from '@backoffice/core';
   import type { OfficeStore } from '../state/office.svelte.ts';
 
-  let { store, agent, onclose }: { store: OfficeStore; agent: Agent; onclose: () => void } = $props();
+  let { store, agent }: { store: OfficeStore; agent: Agent } = $props();
+
+  const STATUS = { working: 'Working', idle: 'Idle', 'needs-input': 'Needs you', unknown: 'Unknown' } as const;
+  const WHERE = { desk: 'At its desk', lounge: 'In the lounge', review: 'In the PR review room' } as const;
+
+  /** What the office knows about this agent, live from the snapshot. */
+  const params = $derived<Array<[string, string]>>([
+    ['Name', agent.name],
+    ['Rig', agent.rig],
+    ['Pod', agent.pod],
+    ['Session', agent.session],
+    ['Seat id', agent.id],
+    ['Kind', agent.kind],
+    ['Runtime', agent.runtime],
+    ['Model', agent.model ?? 'Runtime default'],
+    ['Status', STATUS[agent.status] + (agent.statusReason ? ` · ${agent.statusReason}` : '')],
+    ['Where', WHERE[store.whereIs(agent)]],
+    ['Context used', agent.contextUsedPct === null ? '–' : `${agent.contextUsedPct}%`],
+    ['Work', `${agent.work.assigned} assigned · ${agent.work.inProgress} in progress · ${agent.work.pending} pending · ${agent.work.blocked} blocked`],
+    ['Last activity', agent.lastActivityAt ? new Date(agent.lastActivityAt).toLocaleString() : '–'],
+  ]);
 
   let settings = $state<AgentSettings | null>(null);
   let loadError = $state<string | null>(null);
@@ -61,6 +81,15 @@
 </script>
 
 <section aria-label="Agent settings">
+  <div class="group">
+    <h3>Parameters</h3>
+    <dl class="params">
+      {#each params as [label, value] (label)}
+        <dt>{label}</dt><dd>{value}</dd>
+      {/each}
+    </dl>
+  </div>
+
   {#if loadError}
     <p class="error">{loadError}</p>
   {:else if !settings}
@@ -114,7 +143,7 @@
       {/if}
 
       <div class="row">
-        <button type="button" class="ghost" onclick={onclose}>Back</button>
+        <button type="button" class="ghost" disabled={!dirty || saving} onclick={() => settings && show(settings)}>Discard changes</button>
         <button class="primary" disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save'}</button>
       </div>
       {#if settings.files.length > 0}
@@ -215,6 +244,27 @@
     font-weight: 600;
   }
   .primary:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .params {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .params dt {
+    color: var(--muted);
+  }
+  .params dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .ghost:disabled {
     opacity: 0.5;
     cursor: default;
   }

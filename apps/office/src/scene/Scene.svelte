@@ -42,12 +42,14 @@
   let camera = $state<THREE.OrthographicCamera>();
   let controls = $state<ThreeOrbitControls>();
 
-  // Frame the whole office once, whatever the window size.
-  let framed = false;
+  // Frame the whole office, whatever the window size; again whenever the building grows or shrinks.
+  let framedFor = '';
   $effect(() => {
-    if (framed || !camera || $size.width === 0) return;
-    framed = true;
-    camera.zoom = Math.min(Math.max(Math.min($size.width / 46, $size.height / 29), 6), 60);
+    const { width, depth } = store.layout;
+    const key = `${width}x${depth}`;
+    if (framedFor === key || !camera || $size.width === 0) return;
+    framedFor = key;
+    camera.zoom = Math.min(Math.max(Math.min($size.width / (width + 10), $size.height / (depth + 1)), 5), 60);
     camera.updateProjectionMatrix();
   });
 

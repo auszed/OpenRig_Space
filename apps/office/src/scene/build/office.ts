@@ -1,4 +1,4 @@
-import { DESK_WIDTH, desksForZone, type FurnitureItem, type Layout, type OfficeTheme, type Wall } from '@backoffice/core';
+import { BENCH_CARPET, BENCH_MARGIN, DESK_WIDTH, desksForZone, type FurnitureItem, type Layout, type OfficeTheme, type Wall } from '@backoffice/core';
 import * as THREE from 'three';
 import { buildExterior } from './exterior.ts';
 import { defaultFurniture } from './furniture.ts';
@@ -72,17 +72,19 @@ export function buildOffice(layout: Layout, theme: OfficeTheme<FurnitureBuilder>
     const perRow = Math.ceil(zone.seats / 2);
     const benchWidth = perRow * DESK_WIDTH;
     const inRoom = layout.rooms.some((r) => zone.x > r.x && zone.x < r.x + r.w && zone.z > r.z && zone.z < r.z + r.d);
-    if (!inRoom) office.add(kit.box('carpet', benchWidth + 3, 0.012, 5.4, zone.x, 0, zone.z));
+    if (!inRoom) office.add(kit.box('carpet', benchWidth + BENCH_MARGIN, 0.012, BENCH_CARPET, zone.x, 0, zone.z));
     for (const desk of desksForZone(zone)) place({ kind: 'desk', x: desk.x, z: desk.z, rot: desk.rot });
     place({ kind: 'benchDivider', x: zone.x, z: zone.z, w: benchWidth - 0.1 });
   }
   for (const item of layout.furniture) place(item);
 
-  // Framed prints on the long left wall, where no room hides it.
-  const leftWall = -layout.width / 2 + 0.09;
-  for (const [z, slot] of [[7, 'accent'], [9.2, 'dark'], [11.4, 'accent']] as const) {
-    office.add(kit.box('dark', 0.03, 1.5, 1.2, leftWall, 0.9, z), kit.box(slot, 0.03, 1.3, 1.0, leftWall + 0.02, 1.0, z));
-  }
+  // Framed prints on the walls, alternating the colour of the picture.
+  layout.wallArt.forEach(({ x, z, rot }, i) => {
+    const print = kit.group(kit.box('dark', 0.03, 1.5, 1.2, 0, 0.9, 0), kit.box(i % 2 ? 'dark' : 'accent', 0.03, 1.3, 1.0, 0.02, 1.0, 0));
+    print.position.set(x, 0, z);
+    print.rotation.y = rot;
+    office.add(print);
+  });
 
   office.add(buildExterior(kit, layout));
   return office;

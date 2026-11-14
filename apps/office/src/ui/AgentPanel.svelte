@@ -11,7 +11,14 @@
   // The agent object is replaced on every update; its id is what the panel is really about.
   const agentId = $derived(agent.id);
 
-  let showSettings = $state(false);
+  type Tab = 'terminal' | 'settings';
+  const TABS: Array<[Tab, string]> = [['terminal', 'Terminal'], ['settings', 'Settings']];
+  let tab = $state<Tab>('terminal');
+  // Another agent opens on its terminal, the way the panel always opened.
+  $effect(() => {
+    agentId;
+    tab = 'terminal';
+  });
 
   let screen = $state('');
   let screenError = $state<string | null>(null);
@@ -190,18 +197,32 @@
       <h2>{agent.name}</h2>
       <p>{agent.rig} · {agent.pod} · {agent.runtime}{agent.model ? ` · ${agent.model}` : ''}</p>
     </div>
-    <button class="ghost" aria-pressed={showSettings} onclick={() => (showSettings = !showSettings)}>Settings</button>
     <button class="ghost" aria-pressed={following} onclick={() => store.toggleFollow(agent.id)}>
       {following ? 'Following' : 'Follow'}
     </button>
     <button class="ghost" aria-label="Close" onclick={() => store.select(null)}>✕</button>
   </div>
 
-  {#if showSettings}
+  <div class="tabs" role="tablist" aria-label="{agent.name} views">
+    {#each TABS as [id, label] (id)}
+      <button
+        role="tab"
+        id="tab-{id}"
+        aria-selected={tab === id}
+        aria-controls="view-{id}"
+        onclick={() => (tab = id)}
+      >{label}</button>
+    {/each}
+  </div>
+
+  {#if tab === 'settings'}
+   <div class="view" role="tabpanel" id="view-settings" aria-labelledby="tab-settings">
     {#key agentId}
-      <AgentSettings {store} {agent} onclose={() => (showSettings = false)} />
+      <AgentSettings {store} {agent} />
     {/key}
+   </div>
   {:else}
+   <div class="view" role="tabpanel" id="view-terminal" aria-labelledby="tab-terminal">
   <p class="status">
     <i style:background={store.theme.status[agent.status]}></i>
     <strong>{LABEL[agent.status]}</strong>
@@ -279,6 +300,7 @@
       <button class="primary" disabled={sending || !draft.trim()}>{sending ? 'Sending…' : 'Send'}</button>
     </div>
   </form>
+   </div>
   {/if}
  </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -563,6 +585,36 @@
   .error {
     color: #d92d20;
     font-size: 12px;
+  }
+  .tabs {
+    display: flex;
+    gap: 2px;
+    margin: 0 -14px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tabs button {
+    padding: 6px 12px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    background: none;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .tabs button:hover {
+    color: var(--text);
+  }
+  .tabs button[aria-selected='true'] {
+    border-bottom-color: var(--accent);
+    color: var(--text);
+  }
+  .view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
   }
   .ghost,
   .primary {
