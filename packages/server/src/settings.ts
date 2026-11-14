@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
-import { copyFile, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { isMap, isScalar, LineCounter, parseDocument, type Document, type YAMLMap } from 'yaml';
 import {
-  SettingsError,
-  type AgentSettings, type SettingsAgent, type SettingsPatch, type SettingsSaved, type SettingsStore,
+  LIVE_SWITCH_RUNTIMES, MODEL_CHOICES, SettingsError,
+  type AgentSettings, type HarnessChoice, type SettingsAgent, type SettingsPatch, type SettingsSaved, type SettingsStore,
 } from '@backoffice/core';
 
 /** Runs the `rig` command line with these arguments. */
@@ -16,9 +16,24 @@ export interface TeamFileOptions {
   teamsDir?: string;
   /** Replaced in tests; by default the `rig` on the PATH is run. */
   run?: RigRunner;
+  /** Which harnesses are offered; by default built from the environment and what is installed. */
+  harnesses?: HarnessCatalog;
 }
 
 const REASON = 'Set in OpenRig Space';
+/** How long a harness switch is waited for before the answer goes back; it keeps going after that. */
+const SWITCH_WAIT_MS = 20_000;
+
+/** The result, or 'pending' if it takes longer than `ms`. The work itself is not stopped. */
+async function settleWithin<T>(work: Promise<T>, ms: number): Promise<T | 'pending'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<'pending'>((done) => (timer = setTimeout(() => done('pending'), ms)));
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** `~/openrig/teams` where everything OpenRig lives under `~/openrig`, else the older `~/openrig-teams`. */
 export function defaultTeamsDir(home = homedir()): string {
@@ -36,6 +51,203 @@ const runRig: RigRunner = async (args) => {
     return { ok: false, output: (err as Error).message };
   }
 };
+
+/** A preset as the OpenRig daemon reports it. */
+interface PresetInfo {
+  name: string;
+  usable: boolean;
+  problem: string | null;
+}
+
+export interface HarnessCatalogOptions {
+  /** Read for BACKOFFICE_HARNESSES, BACKOFFICE_MODELS_<HARNESS> and OPENRIG_HOME. */
+  env?: Record<string, string | undefined>;
+  run?: RigRunner;
+  /** Where a program is on this machine, or null. */
+  which?: (program: string) => string | null;
+  /** The models a harness lists itself (only opencode does). */
+  listModels?: (harness: string, program: string) => Promise<string[]>;
+  home?: string;
+}
+
+const PROGRAM: Record<string, string> = { 'claude-code': 'claude', codex: 'codex', pi: 'pi', opencode: 'opencode' };
+const CACHE_MS = 60_000;
+
+const whichProgram = (program: string): string | null => Bun.which(program);
+
+async function opencodeModels(_harness: string, program: string): Promise<string[]> {
+  try {
+    const proc = Bun.spawn([program, 'models'], { stdout: 'pipe', stderr: 'ignore' });
+    const timer = setTimeout(() => proc.kill(), 15_000);
+    const out = await new Response(proc.stdout).text();
+    clearTimeout(timer);
+    return out.split('\n').map((l) => l.trim()).filter((l) => /^[\w.-]+\/\S+$/.test(l)).slice(0, 200);
+  } catch {
+    return [];
+  }
+}
+
+const list = (value: string | undefined) => [...new Set((value ?? '').split(',').map((v) => v.trim()).filter(Boolean))];
+
+/**
+ * The harnesses agents may run on. `BACKOFFICE_HARNESSES` names them outright;
+ * without it, every built-in harness whose program is installed is offered,
+ * plus each community harness OpenRig has a preset for, plus opencode when it
+ * is installed (this office can write its preset). Suggested models come from
+ * `BACKOFFICE_MODELS_<HARNESS>` (e.g. BACKOFFICE_MODELS_OPENCODE), else from
+ * the harness itself where it can say.
+ */
+export class HarnessCatalog {
+  private env: Record<string, string | undefined>;
+  private run: RigRunner;
+  private which: (program: string) => string | null;
+  private listModels: (harness: string, program: string) => Promise<string[]>;
+  private home: string;
+  private cached: { at: number; value: Promise<HarnessChoice[]> } | null = null;
+
+  constructor(opts: HarnessCatalogOptions = {}) {
+    this.env = opts.env ?? process.env;
+    this.run = opts.run ?? runRig;
+    this.which = opts.which ?? whichProgram;
+    this.listModels = opts.listModels ?? opencodeModels;
+    this.home = opts.home ?? homedir();
+  }
+
+  /** The opencode program: on the PATH, else where its installer puts it. */
+  opencodeProgram(): string | null {
+    const found = this.which('opencode');
+    if (found) return found;
+    const usual = join(this.home, '.opencode', 'bin', 'opencode');
+    return existsSync(usual) ? usual : null;
+  }
+
+  private program(id: string): string | null {
+    return id === 'opencode' ? this.opencodeProgram() : PROGRAM[id] ? this.which(PROGRAM[id]!) : null;
+  }
+
+  /** What the daemon knows about community harness presets, or null when it cannot be asked. */
+  async presets(): Promise<{ dir: string | null; harnesses: PresetInfo[] } | null> {
+    const done = await this.run(['community-harness', 'list', '--json']);
+    if (!done.ok) return null;
+    try {
+      const data = JSON.parse(done.output) as { dir?: unknown; harnesses?: Array<Record<string, unknown>> };
+      return {
+        dir: typeof data.dir === 'string' ? data.dir : null,
+        harnesses: (data.harnesses ?? []).map((h) => ({
+          name: String(h.name ?? ''),
+          usable: h.usable !== false,
+          problem: typeof h.problem === 'string' ? h.problem : null,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  list(): Promise<HarnessChoice[]> {
+    if (!this.cached || Date.now() - this.cached.at > CACHE_MS) {
+      this.cached = { at: Date.now(), value: this.build() };
+    }
+    return this.cached.value;
+  }
+
+  forget(): void {
+    this.cached = null;
+  }
+
+  private async build(): Promise<HarnessChoice[]> {
+    let ids = list(this.env.BACKOFFICE_HARNESSES);
+    if (ids.length === 0) {
+      const presets = await this.presets();
+      ids = [
+        ...LIVE_SWITCH_RUNTIMES.filter((id) => this.program(id)),
+        ...(presets?.harnesses.filter((h) => h.usable).map((h) => h.name) ?? []),
+        ...(this.opencodeProgram() ? ['opencode'] : []),
+      ];
+    }
+    return Promise.all(
+      [...new Set(ids)].map(async (id): Promise<HarnessChoice> => {
+        const named = list(this.env[`BACKOFFICE_MODELS_${id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`]);
+        const program = this.program(id);
+        const models = named.length
+          ? named
+          : id === 'claude-code'
+            ? [...MODEL_CHOICES]
+            : id === 'opencode' && program
+              ? await this.listModels(id, program)
+              : [];
+        return { id, liveSwitch: LIVE_SWITCH_RUNTIMES.includes(id), models };
+      }),
+    );
+  }
+
+  /**
+   * Makes sure OpenRig can launch opencode: writes a preset and its launcher
+   * into OpenRig's community-harnesses folder when there is none, then has the
+   * daemon read it back. An existing preset is never touched. Returns notes.
+   */
+  async ensureOpencode(): Promise<string[]> {
+    const before = await this.presets();
+    const known = before?.harnesses.find((h) => h.name === 'opencode');
+    if (known?.usable) return [];
+    if (known) throw new SettingsError(`OpenRig has an opencode preset it cannot use: ${known.problem ?? 'no reason given'}`, 409);
+
+    const program = this.opencodeProgram();
+    if (!program) throw new SettingsError('opencode is not installed on this machine, so no agent can be moved to it.', 409);
+    const openrigHome = this.env.OPENRIG_HOME || join(this.home, '.openrig');
+    const dir = before?.dir ?? join(openrigHome, 'community-harnesses');
+    const preset = join(dir, 'opencode.yaml');
+    if (existsSync(preset)) {
+      return [`${preset} already exists and was left as it is.`];
+    }
+    const launcher = join(dir, 'opencode-launch.sh');
+    await mkdir(dir, { recursive: true });
+    await writeFile(launcher, opencodeLauncher(program));
+    await chmod(launcher, 0o755);
+    await writeFile(preset, opencodePreset(launcher));
+
+    const after = await this.presets();
+    const read = after?.harnesses.find((h) => h.name === 'opencode');
+    if (after && (!read || !read.usable)) {
+      await rm(preset, { force: true });
+      await rm(launcher, { force: true });
+      throw new SettingsError(`OpenRig refused the opencode preset this office wrote, so it was removed: ${read?.problem ?? 'not listed'}`, 502);
+    }
+    this.forget();
+    return [
+      `Installed opencode for OpenRig: ${preset} and ${launcher}.`,
+      ...(after ? [] : ['OpenRig could not be asked to check the new preset; run "rig community-harness list" to see it.']),
+    ];
+  }
+}
+
+/** Starts opencode for an OpenRig seat, handing it the seat's model (OPENRIG_MODEL) through its inline config. */
+export function opencodeLauncher(program: string): string {
+  return `#!/bin/sh
+# Written by OpenRig Space. Starts opencode in an OpenRig seat; the seat's model, if it has one,
+# reaches opencode as inline config because its interactive command has no --model flag.
+if [ -n "$OPENRIG_MODEL" ]; then
+  model=$(printf '%s' "$OPENRIG_MODEL" | sed 's/[\\\\"]/\\\\&/g')
+  OPENCODE_CONFIG_CONTENT="{\\"model\\":\\"$model\\"}"
+  export OPENCODE_CONFIG_CONTENT
+fi
+exec ${JSON.stringify(program)} "$@"
+`;
+}
+
+export function opencodePreset(launcher: string): string {
+  return `# Written by OpenRig Space so OpenRig can run opencode as a community harness.
+format: 1
+name: opencode
+command: ${JSON.stringify(launcher)}
+maintainer: OpenRig Space
+limits:
+  - Not tested by OpenRig.
+  - No resume; every launch starts a new opencode session.
+  - Whether it needs you is read from the screen only.
+passes_model: true
+`;
+}
 
 interface Yaml {
   path: string;
@@ -153,10 +365,19 @@ interface Located {
 export class TeamFileSettings implements SettingsStore {
   private teamsDir: string;
   private run: RigRunner;
+  private harnesses: HarnessCatalog;
 
   constructor(opts: TeamFileOptions = {}) {
     this.teamsDir = resolve(opts.teamsDir ?? defaultTeamsDir());
     this.run = opts.run ?? runRig;
+    this.harnesses = opts.harnesses ?? new HarnessCatalog({ run: this.run });
+  }
+
+  /** The offered harnesses, with the agent's current one always among them. */
+  private async runtimesFor(current: string | null): Promise<HarnessChoice[]> {
+    const offered = await this.harnesses.list();
+    if (!current || offered.some((h) => h.id === current)) return offered;
+    return [{ id: current, liveSwitch: LIVE_SWITCH_RUNTIMES.includes(current), models: current === 'claude-code' ? [...MODEL_CHOICES] : [] }, ...offered];
   }
 
   private async locate(agent: SettingsAgent): Promise<Located | string> {
@@ -202,17 +423,21 @@ export class TeamFileSettings implements SettingsStore {
     };
   }
 
-  private describe(agent: SettingsAgent, found: Located): AgentSettings {
+  private describe(agent: SettingsAgent, found: Located, runtimes: HarnessChoice[]): AgentSettings {
+    const runtime = typeof found.member.runtime === 'string' ? found.member.runtime : null;
     const skills = strings(found.spec?.doc.toJS().profiles?.[found.profile]?.uses?.skills);
     const rules = (found.member.claude_permissions ?? {}) as { allow?: unknown; deny?: unknown };
     return {
       editable: true,
       reason: null,
+      runtime,
+      runtimes,
       model: typeof found.member.model === 'string' ? found.member.model : null,
       skills,
       // A skill already in use stays on the list even if the pool no longer names it.
       availableSkills: [...new Set([...found.pool, ...skills])].sort(),
-      toolsEditable: agent.runtime === 'claude-code',
+      // Tool rules are Claude Code's own; they follow the harness the file names.
+      toolsEditable: (runtime ?? agent.runtime) === 'claude-code',
       allow: strings(rules.allow),
       deny: strings(rules.deny),
       files: [found.rig.path, ...(found.spec ? [found.spec.path] : [])],
@@ -222,18 +447,31 @@ export class TeamFileSettings implements SettingsStore {
   async read(agent: SettingsAgent): Promise<AgentSettings> {
     const found = await this.locate(agent);
     if (typeof found === 'string') {
-      return { editable: false, reason: found, model: null, skills: [], availableSkills: [], toolsEditable: false, allow: [], deny: [], files: [] };
+      return {
+        editable: false, reason: found, runtime: null, runtimes: [], model: null, skills: [], availableSkills: [],
+        toolsEditable: false, allow: [], deny: [], files: [],
+      };
     }
-    return this.describe(agent, found);
+    const runtime = typeof found.member.runtime === 'string' ? found.member.runtime : null;
+    return this.describe(agent, found, await this.runtimesFor(runtime));
   }
 
   async write(agent: SettingsAgent, patch: SettingsPatch): Promise<SettingsSaved> {
     const found = await this.locate(agent);
     if (typeof found === 'string') throw new SettingsError(found, 409);
-    const before = this.describe(agent, found);
+    const fileRuntime = typeof found.member.runtime === 'string' ? found.member.runtime : null;
+    const runtimes = await this.runtimesFor(fileRuntime);
+    const before = this.describe(agent, found, runtimes);
     const notes: string[] = [];
     const { at } = found;
     let { rig, spec } = found;
+
+    const runtimeChanged = patch.runtime !== undefined && patch.runtime !== before.runtime;
+    const target = runtimeChanged ? runtimes.find((h) => h.id === patch.runtime) : undefined;
+    if (runtimeChanged && !target) {
+      throw new SettingsError(`"${patch.runtime}" is not a harness this office offers. Add it to BACKOFFICE_HARNESSES to offer it.`);
+    }
+    if (runtimeChanged) rig = editKey(rig, at, 'runtime', [`runtime: ${target!.id}`]);
 
     const modelChanged = patch.model !== undefined && patch.model !== before.model;
     if (modelChanged) rig = editKey(rig, at, 'model', patch.model ? [`model: ${patch.model}`] : null);
@@ -242,7 +480,8 @@ export class TeamFileSettings implements SettingsStore {
     const deny = patch.deny ?? before.deny;
     const rulesChanged = !same(allow, before.allow) || !same(deny, before.deny);
     if (rulesChanged) {
-      if (!before.toolsEditable) throw new SettingsError(`Tool rules cannot be set for a ${agent.runtime} agent here.`);
+      const ruled = runtimeChanged ? target!.id === 'claude-code' : before.toolsEditable;
+      if (!ruled) throw new SettingsError(`Tool rules cannot be set for a ${target?.id ?? before.runtime ?? agent.runtime} agent here.`);
       const block = ['claude_permissions:'];
       if (allow.length) block.push(`  allow: ${flowList(allow)}`);
       if (deny.length) block.push(`  deny: ${flowList(deny)}`);
@@ -259,13 +498,29 @@ export class TeamFileSettings implements SettingsStore {
 
     // Read the edited text back before anything is written: it must say exactly what was asked.
     const member = (rig.doc.getIn(at) as YAMLMap).toJSON() as Record<string, unknown>;
-    const check = this.describe(agent, { ...found, rig, spec, member });
-    const wanted = { model: patch.model !== undefined ? patch.model : before.model, skills: patch.skills ?? before.skills, allow, deny };
-    if (check.model !== wanted.model || !same(check.skills, wanted.skills) || !same(check.allow, allow) || !same(check.deny, deny)) {
+    const check = this.describe(agent, { ...found, rig, spec, member }, runtimes);
+    const wanted = {
+      runtime: runtimeChanged ? target!.id : before.runtime,
+      model: patch.model !== undefined ? patch.model : before.model,
+      skills: patch.skills ?? before.skills,
+      allow,
+      deny,
+    };
+    if (check.runtime !== wanted.runtime || check.model !== wanted.model || !same(check.skills, wanted.skills) || !same(check.allow, allow) || !same(check.deny, deny)) {
       throw new SettingsError('The team files have a shape this office cannot edit safely. Nothing was written.', 409);
     }
 
-    if ((modelChanged || rulesChanged) && (await save(rig))) notes.push(`Updated ${rig.path}.`);
+    // A community harness must be launchable before any file names it.
+    if (target && !target.liveSwitch) {
+      if (target.id === 'opencode') {
+        notes.push(...(await this.harnesses.ensureOpencode()));
+      } else {
+        const preset = (await this.harnesses.presets())?.harnesses.find((h) => h.name === target.id);
+        if (preset && !preset.usable) throw new SettingsError(`OpenRig cannot use its ${target.id} preset: ${preset.problem ?? 'no reason given'}`, 409);
+      }
+    }
+
+    if ((runtimeChanged || modelChanged || rulesChanged) && (await save(rig))) notes.push(`Updated ${rig.path}.`);
     if (spec && skillsChanged && (await save(spec))) {
       notes.push(`Updated ${spec.path}.`);
       if (found.sharedBy > 1) notes.push(`${found.sharedBy} agents of this rig are built from that file, so they all get these skills.`);
@@ -273,14 +528,37 @@ export class TeamFileSettings implements SettingsStore {
     if (skillsChanged) notes.push('Skills reach an agent only when it is launched fresh; the running conversation keeps the ones it has.');
 
     // The seat OpenRig already created keeps its own record, which the files do not touch.
-    if (modelChanged && patch.model) {
+    const liveSwitch = runtimeChanged && target!.liveSwitch && agent.runtime !== target!.id;
+    if (liveSwitch) {
+      const args = ['seat', 'set-runtime', agent.session, '--runtime', target!.id, '--reason', REASON];
+      if (wanted.model) args.push('--model', wanted.model);
+      const done = await settleWithin(this.run(args), SWITCH_WAIT_MS);
+      notes.push(
+        done === 'pending'
+          ? `${agent.name} is moving to ${target!.id}: a successor is starting with a fresh conversation and takes over once it confirms. Follow it with "rig seat status ${agent.session}".`
+          : done.ok
+            ? `${agent.name} moved to ${target!.id} with a fresh conversation. Messages sent during the switch were held; send them again.`
+            : `The team file now says ${target!.id}, but OpenRig did not move the running seat: ${done.output}`,
+      );
+    } else if (runtimeChanged && !target!.liveSwitch) {
+      notes.push(
+        `${agent.name} keeps running on ${agent.runtime} for now. OpenRig cannot move a running seat to ${target!.id}; ` +
+          `it starts on ${target!.id}, with a fresh conversation, when the rig is brought up again from its team file ` +
+          `("rig up ${rig.path} --plan" shows what that would do).`,
+      );
+    } else if (runtimeChanged) {
+      notes.push(`The running seat is already on ${target!.id}.`);
+    }
+
+    // On a harness change the model went with the switch, or belongs to a harness the seat is not on yet.
+    if (!runtimeChanged && modelChanged && patch.model) {
       const done = await this.run(['seat', 'set-model', agent.session, '--model', patch.model, '--reason', REASON]);
       notes.push(
         done.ok
           ? `Model saved on the seat: ${agent.name} uses ${patch.model} from its next restart.`
           : `The file is updated, but OpenRig did not save the model on the running seat: ${done.output}`,
       );
-    } else if (modelChanged) {
+    } else if (!runtimeChanged && modelChanged) {
       notes.push('The model line was removed from the team file. OpenRig has no way to clear a model already saved on a seat; pick a model to change it.');
     }
     if (rulesChanged) {
@@ -302,6 +580,7 @@ export class TeamFileSettings implements SettingsStore {
 
     const after = await this.locate(agent);
     if (typeof after === 'string') throw new SettingsError(after, 502);
-    return { settings: this.describe(agent, after), notes };
+    const afterRuntime = typeof after.member.runtime === 'string' ? after.member.runtime : null;
+    return { settings: this.describe(agent, after, await this.runtimesFor(afterRuntime)), notes };
   }
 }

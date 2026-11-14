@@ -15,7 +15,7 @@
     ['Session', agent.session],
     ['Seat id', agent.id],
     ['Kind', agent.kind],
-    ['Runtime', agent.runtime],
+    ['Harness (running)', agent.runtime],
     ['Model', agent.model ?? 'Runtime default'],
     ['Status', STATUS[agent.status] + (agent.statusReason ? ` · ${agent.statusReason}` : '')],
     ['Where', WHERE[store.whereIs(agent)]],
@@ -26,6 +26,7 @@
 
   let settings = $state<AgentSettings | null>(null);
   let loadError = $state<string | null>(null);
+  let runtime = $state('');
   let model = $state('');
   let skills = $state<string[]>([]);
   let allow = $state('');
@@ -39,6 +40,7 @@
 
   function show(next: AgentSettings) {
     settings = next;
+    runtime = next.runtime ?? agent.runtime;
     model = next.model ?? '';
     skills = [...next.skills];
     allow = next.allow.join('\n');
@@ -49,9 +51,17 @@
   // svelte-ignore state_referenced_locally
   store.readSettings(agent.id).then(show, (err) => (loadError = (err as Error).message));
 
+  const savedRuntime = $derived(settings?.runtime ?? agent.runtime);
+  const runtimeChanged = $derived(settings !== null && runtime !== savedRuntime);
+  const harness = $derived(settings?.runtimes.find((h) => h.id === runtime) ?? null);
+  const models = $derived(harness ? harness.models : runtime === 'claude-code' ? [...MODEL_CHOICES] : []);
+  // Tool rules are Claude Code's; they can be edited only while the agent stays on it.
+  const rulesEditable = $derived(settings !== null && settings.toolsEditable && !runtimeChanged);
+
   const dirty = $derived(
     settings !== null &&
-      (model.trim() !== (settings.model ?? '') ||
+      (runtimeChanged ||
+        model.trim() !== (settings.model ?? '') ||
         !same([...skills].sort(), [...settings.skills].sort()) ||
         !same(rules(allow), settings.allow) ||
         !same(rules(deny), settings.deny)),
@@ -59,6 +69,12 @@
 
   async function save() {
     if (!settings || saving) return;
+    if (runtimeChanged && harness) {
+      const how = harness.liveSwitch
+        ? `OpenRig moves the running seat now: a successor starts on ${runtime} with a fresh conversation and takes over.`
+        : `The team file is changed now; the seat starts on ${runtime}, with a fresh conversation, the next time the rig is brought up from it.`;
+      if (!confirm(`Move ${agent.name} from ${savedRuntime} to ${runtime}?\n\n${how}\n\nThe current conversation is not carried over.`)) return;
+    }
     saving = true;
     saveError = null;
     notes = [];
@@ -66,9 +82,10 @@
       // Skills keep the order they have in the file; new ones go at the end.
       const kept = settings.skills.filter((id) => skills.includes(id));
       const saved = await store.saveSettings(agent.id, {
+        ...(runtimeChanged ? { runtime } : {}),
         model: model.trim() || null,
         skills: [...kept, ...skills.filter((id) => !kept.includes(id))],
-        ...(settings.toolsEditable ? { allow: rules(allow), deny: rules(deny) } : {}),
+        ...(rulesEditable ? { allow: rules(allow), deny: rules(deny) } : {}),
       });
       show(saved.settings);
       notes = saved.notes;
@@ -105,12 +122,33 @@
       }}
     >
       <div class="group">
+        <label for="set-runtime">Harness</label>
+        <select id="set-runtime" bind:value={runtime}>
+          {#each settings.runtimes as choice (choice.id)}
+            <option value={choice.id}>{choice.id}{choice.id === savedRuntime ? ' (current)' : ''}</option>
+          {/each}
+        </select>
+        {#if runtimeChanged && harness}
+          <p class="warn">
+            {harness.liveSwitch
+              ? `Switches the running seat now. ${agent.name} starts again on ${runtime} with a fresh conversation.`
+              : `Saved to the team file. ${agent.name} starts on ${runtime}, with a fresh conversation, when the rig is brought up again.`}
+          </p>
+        {:else}
+          <p class="muted">The coding tool this agent runs in. Offered: set BACKOFFICE_HARNESSES on the server to choose.</p>
+        {/if}
+      </div>
+
+      <div class="group">
         <label for="set-model">Model</label>
-        <input id="set-model" list="model-choices" placeholder="Default for {agent.runtime}" maxlength="80" bind:value={model} />
+        <input id="set-model" list="model-choices" placeholder="Default for {runtime}" maxlength="120" bind:value={model} />
         <datalist id="model-choices">
-          {#each MODEL_CHOICES as choice (choice)}<option value={choice}></option>{/each}
+          {#each models as choice (choice)}<option value={choice}></option>{/each}
         </datalist>
-        <p class="muted">Used from this agent's next restart. Leave empty for no model of its own.</p>
+        <p class="muted">
+          {runtimeChanged ? `A model for ${runtime}; it goes with the switch.` : "Used from this agent's next restart."}
+          Leave empty for {runtime}'s default.
+        </p>
       </div>
 
       <fieldset class="group">
@@ -123,7 +161,7 @@
         <p class="muted">Reach the agent only when it is launched fresh, not on a restart of the same conversation.</p>
       </fieldset>
 
-      {#if settings.toolsEditable}
+      {#if rulesEditable}
         <div class="group">
           <label for="set-allow">Tools allowed without asking</label>
           <textarea id="set-allow" rows="3" placeholder="One rule per line, e.g. WebSearch or Bash(git *)" bind:value={allow}></textarea>
@@ -132,7 +170,7 @@
           <p class="muted">Used from this agent's next restart. Rules the whole team gets are not listed here.</p>
         </div>
       {:else}
-        <p class="muted">Tool rules cannot be set here for a {agent.runtime} agent.</p>
+        <p class="muted">Tool rules can be set here only for a claude-code agent{runtimeChanged ? ', so they stay as they are' : ''}.</p>
       {/if}
 
       {#if saveError}<p class="error" role="alert">{saveError}</p>{/if}
@@ -191,6 +229,14 @@
     font-size: 12px;
     overflow-wrap: anywhere;
   }
+  .warn {
+    margin: 0;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    font-size: 12px;
+  }
+  select,
   input:not([type='checkbox']),
   textarea {
     width: 100%;
