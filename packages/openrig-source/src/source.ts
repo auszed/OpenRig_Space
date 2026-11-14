@@ -16,7 +16,7 @@ export class OpenRigSource implements OfficeSource {
     const [nodeLists, queue] = await Promise.all([
       Promise.all(rigs.map((r) => this.client.get<RawNode[]>(`/api/rigs/${encodeURIComponent(r.id)}/nodes`))),
       // The queue is a nice-to-have: an office without the task list is still an office.
-      this.client.get<RawQueueItem[]>('/api/queue/list?activeOnly=1&limit=200&sort=updated').catch(() => null),
+      this.client.get<RawQueueItem[]>('/api/queue/list?limit=300&sort=updated').catch(() => null),
     ]);
     return {
       generatedAt: new Date().toISOString(),

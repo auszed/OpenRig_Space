@@ -1,5 +1,6 @@
-import type { Agent, AgentStatus, OfficeSnapshot } from './model.ts';
+import type { Agent, AgentStatus, OfficeSnapshot, QueueItem } from './model.ts';
 import type { OfficeSource } from './source.ts';
+import { rigOfSession, TaskError, type NewTask, type TaskCreated, type TaskStore } from './tasks.ts';
 
 const SEATS: Array<[rig: string, pod: string, name: string, status: AgentStatus, reason: string | null]> = [
   ['demo', 'lead', 'lead.planner', 'working', null],
@@ -13,7 +14,7 @@ const SEATS: Array<[rig: string, pod: string, name: string, status: AgentStatus,
 ];
 
 /** A made-up office, for developing and testing without a running OpenRig. */
-export class MockSource implements OfficeSource {
+export class MockSource implements OfficeSource, TaskStore {
   readonly name = 'mock';
   readonly sent: Array<{ session: string; text: string }> = [];
   readonly answered: Array<{ session: string; key: string }> = [];
@@ -34,24 +35,45 @@ export class MockSource implements OfficeSource {
     contextUsedPct: 10 + i * 9,
   }));
 
+  private queue: QueueItem[] = (() => {
+    const s = (i: number) => this.agents[i]!.session;
+    const row = (id: string, summary: string, state: string, from: string, to: string, blockedOn: string | null = null, priority = 'routine'): QueueItem =>
+      ({ id, summary, state, from, to, rig: rigOfSession(to), priority, blockedOn, updatedAt: new Date().toISOString() });
+    return [
+      row('mock-q1', 'Wire the login form to the API', 'in-progress', s(0), s(2)),
+      row('mock-q2', 'PR #42: smoke tests for the login form', 'pending', s(3), s(4), 'review'),
+      row('mock-q3', 'Pick the colour palette for the docs site', 'blocked', s(0), s(5), 'decision from the person', 'urgent'),
+      row('mock-q4', 'Rotate the kernel log files', 'done', s(6), s(7)),
+    ];
+  })();
+  private created = 0;
+
+  async create(task: NewTask): Promise<TaskCreated> {
+    if (!this.agents.some((a) => a.session === task.destination)) throw new TaskError(`There is no agent "${task.destination}".`, 404);
+    const id = `mock-t${++this.created}`;
+    this.queue.unshift({
+      id, summary: task.summary, state: 'pending', from: 'person@external', to: task.destination,
+      rig: rigOfSession(task.destination), priority: task.priority, blockedOn: null, updatedAt: new Date().toISOString(),
+    });
+    for (const l of this.listeners) l();
+    return { id };
+  }
+
+  async cancel(id: string): Promise<void> {
+    const row = this.queue.find((q) => q.id === id);
+    if (!row) throw new TaskError(`There is no task "${id}".`, 404);
+    row.state = 'done';
+    row.updatedAt = new Date().toISOString();
+    for (const l of this.listeners) l();
+  }
+
   async snapshot(): Promise<OfficeSnapshot> {
     return {
       generatedAt: new Date().toISOString(),
       source: this.name,
       rigs: [...new Set(this.agents.map((a) => a.rig))].map((name) => ({ id: name, name })),
       agents: this.agents.map((a) => ({ ...a, work: { ...a.work } })),
-      queue: [
-        {
-          id: 'mock-q1', summary: 'Wire the login form to the API', state: 'in-progress',
-          from: this.agents[0]!.session, to: this.agents[2]!.session, priority: 'routine',
-          blockedOn: null, updatedAt: new Date(0).toISOString(),
-        },
-        {
-          id: 'mock-q2', summary: 'PR #42: smoke tests for the login form', state: 'pending',
-          from: this.agents[3]!.session, to: this.agents[4]!.session, priority: 'routine',
-          blockedOn: 'review', updatedAt: new Date(0).toISOString(),
-        },
-      ],
+      queue: this.queue.map((q) => ({ ...q })),
       health: { ok: true, message: null },
     };
   }

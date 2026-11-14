@@ -18,7 +18,31 @@ export interface TeamFileOptions {
   run?: RigRunner;
   /** Which harnesses are offered; by default built from the environment and what is installed. */
   harnesses?: HarnessCatalog;
+  /** What "~" means in a working folder; by default the home of the user running the office. */
+  home?: string;
 }
+
+/** One member of a rig, with where it sits in the rig document and its OpenRig session. */
+interface Member {
+  at: Array<string | number>;
+  session: string;
+  cwd: string | null;
+}
+
+/** Every member of the rig file. OpenRig names a seat "<pod>-<member>@<rig>". */
+function membersOf(rigFile: Yaml, rigName: string): Member[] {
+  const pods = rigFile.doc.toJS().pods;
+  if (!Array.isArray(pods)) return [];
+  return pods.flatMap((pod: { id?: unknown; members?: unknown }, p: number) =>
+    (Array.isArray(pod?.members) ? pod.members : []).map((m: { id?: unknown; cwd?: unknown }, i: number) => ({
+      at: ['pods', p, 'members', i],
+      session: `${String(pod.id)}-${String(m?.id)}@${rigName}`,
+      cwd: typeof m?.cwd === 'string' ? m.cwd : null,
+    })),
+  );
+}
+
+const sameAt = (a: Array<string | number>, b: Array<string | number>) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 const REASON = 'Set in OpenRig Space';
 /** How long a harness switch is waited for before the answer goes back; it keeps going after that. */
@@ -42,7 +66,7 @@ export function defaultTeamsDir(home = homedir()): string {
 }
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-const runRig: RigRunner = async (args) => {
+export const runRig: RigRunner = async (args) => {
   try {
     const proc = Bun.spawn(['rig', ...args], { stdout: 'pipe', stderr: 'pipe' });
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
@@ -366,10 +390,12 @@ export class TeamFileSettings implements SettingsStore {
   private teamsDir: string;
   private run: RigRunner;
   private harnesses: HarnessCatalog;
+  private home: string;
 
   constructor(opts: TeamFileOptions = {}) {
     this.teamsDir = resolve(opts.teamsDir ?? defaultTeamsDir());
     this.run = opts.run ?? runRig;
+    this.home = opts.home ?? homedir();
     this.harnesses = opts.harnesses ?? new HarnessCatalog({ run: this.run });
   }
 
@@ -433,6 +459,8 @@ export class TeamFileSettings implements SettingsStore {
       runtime,
       runtimes,
       model: typeof found.member.model === 'string' ? found.member.model : null,
+      cwd: typeof found.member.cwd === 'string' ? found.member.cwd : null,
+      cwdSharedBy: membersOf(found.rig, agent.rig).filter((m) => m.cwd === (typeof found.member.cwd === 'string' ? found.member.cwd : null)).length,
       skills,
       // A skill already in use stays on the list even if the pool no longer names it.
       availableSkills: [...new Set([...found.pool, ...skills])].sort(),
@@ -448,7 +476,7 @@ export class TeamFileSettings implements SettingsStore {
     const found = await this.locate(agent);
     if (typeof found === 'string') {
       return {
-        editable: false, reason: found, runtime: null, runtimes: [], model: null, skills: [], availableSkills: [],
+        editable: false, reason: found, runtime: null, runtimes: [], model: null, cwd: null, cwdSharedBy: 0, skills: [], availableSkills: [],
         toolsEditable: false, allow: [], deny: [], files: [],
       };
     }
@@ -472,6 +500,15 @@ export class TeamFileSettings implements SettingsStore {
       throw new SettingsError(`"${patch.runtime}" is not a harness this office offers. Add it to BACKOFFICE_HARNESSES to offer it.`);
     }
     if (runtimeChanged) rig = editKey(rig, at, 'runtime', [`runtime: ${target!.id}`]);
+
+    // The working folder: this member alone, or everyone in the rig who shares its current folder.
+    const cwdChanged = patch.cwd !== undefined && patch.cwd !== before.cwd;
+    const moving = !cwdChanged
+      ? []
+      : (patch.cwdScope ?? 'agent') === 'rig'
+        ? membersOf(rig, agent.rig).filter((m) => m.cwd === before.cwd)
+        : membersOf(rig, agent.rig).filter((m) => sameAt(m.at, at));
+    for (const m of moving) rig = editKey(rig, m.at, 'cwd', [`cwd: ${JSON.stringify(patch.cwd)}`]);
 
     const modelChanged = patch.model !== undefined && patch.model !== before.model;
     if (modelChanged) rig = editKey(rig, at, 'model', patch.model ? [`model: ${patch.model}`] : null);
@@ -506,7 +543,8 @@ export class TeamFileSettings implements SettingsStore {
       allow,
       deny,
     };
-    if (check.runtime !== wanted.runtime || check.model !== wanted.model || !same(check.skills, wanted.skills) || !same(check.allow, allow) || !same(check.deny, deny)) {
+    const movedRight = moving.every((m) => (rig.doc.getIn([...m.at, 'cwd']) as unknown) === patch.cwd);
+    if (!movedRight || check.runtime !== wanted.runtime || check.model !== wanted.model || !same(check.skills, wanted.skills) || !same(check.allow, allow) || !same(check.deny, deny)) {
       throw new SettingsError('The team files have a shape this office cannot edit safely. Nothing was written.', 409);
     }
 
@@ -520,7 +558,21 @@ export class TeamFileSettings implements SettingsStore {
       }
     }
 
-    if ((runtimeChanged || modelChanged || rulesChanged) && (await save(rig))) notes.push(`Updated ${rig.path}.`);
+    if ((runtimeChanged || modelChanged || rulesChanged || cwdChanged) && (await save(rig))) notes.push(`Updated ${rig.path}.`);
+
+    if (cwdChanged) {
+      const abs = patch.cwd!.startsWith('~/') ? join(this.home, patch.cwd!.slice(2)) : patch.cwd!;
+      const refused: string[] = [];
+      for (const m of moving) {
+        const done = await this.run(['seat', 'set-cwd', m.session, '--cwd', abs, '--reason', REASON]);
+        if (!done.ok) refused.push(`${m.session}: ${done.output}`);
+      }
+      const who = moving.length === 1 ? agent.name : `${moving.length} agents of ${agent.rig}`;
+      notes.push(
+        `${who} will work in ${abs} from the next fresh launch. Files already in ${before.cwd ?? 'the old folder'} are not moved.`,
+        ...(refused.length ? [`OpenRig did not save the folder on these seats (the file is updated): ${refused.join('; ')}`] : []),
+      );
+    }
     if (spec && skillsChanged && (await save(spec))) {
       notes.push(`Updated ${spec.path}.`);
       if (found.sharedBy > 1) notes.push(`${found.sharedBy} agents of this rig are built from that file, so they all get these skills.`);

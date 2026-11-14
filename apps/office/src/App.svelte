@@ -5,6 +5,7 @@
   import { OfficeStore } from './state/office.svelte.ts';
   import AgentList from './ui/AgentList.svelte';
   import AgentPanel from './ui/AgentPanel.svelte';
+  import TaskBoard from './ui/TaskBoard.svelte';
   import TopBar from './ui/TopBar.svelte';
 
   const store = new OfficeStore();
@@ -30,6 +31,9 @@
   <AgentList {store} />
   {#if store.selected}
     <AgentPanel {store} agent={store.selected} />
+  {/if}
+  {#if store.boardOpen}
+    <TaskBoard {store} />
   {/if}
 
   <p class="hint">Drag to move · scroll to zoom · right-drag to turn · click an agent</p>

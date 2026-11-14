@@ -108,7 +108,7 @@ describe('layout', () => {
 describe('where agents are', () => {
   let layout = defaultLayout();
   const item = (over: Partial<QueueItem>): QueueItem => ({
-    id: 'q', summary: 'Build the thing', state: 'pending', from: 'x@r', to: 'y@r', priority: null, blockedOn: null,
+    id: 'q', summary: 'Build the thing', state: 'pending', from: 'x@r', to: 'y@r', rig: 'r', priority: null, blockedOn: null,
     updatedAt: '', ...over,
   });
   const inRoom = (id: string, p: { x: number; z: number }) => {

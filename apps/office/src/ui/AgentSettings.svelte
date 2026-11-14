@@ -27,6 +27,11 @@
   let settings = $state<AgentSettings | null>(null);
   let loadError = $state<string | null>(null);
   let runtime = $state('');
+  let cwd = $state('');
+  let cwdScope = $state<'agent' | 'rig'>('agent');
+  let workspace = $state<Record<string, string> | null>(null);
+  // svelte-ignore state_referenced_locally
+  store.readWorkspace().then((w) => (workspace = w), () => (workspace = null));
   let model = $state('');
   let skills = $state<string[]>([]);
   let allow = $state('');
@@ -41,6 +46,8 @@
   function show(next: AgentSettings) {
     settings = next;
     runtime = next.runtime ?? agent.runtime;
+    cwd = next.cwd ?? '';
+    cwdScope = 'agent';
     model = next.model ?? '';
     skills = [...next.skills];
     allow = next.allow.join('\n');
@@ -58,9 +65,12 @@
   // Tool rules are Claude Code's; they can be edited only while the agent stays on it.
   const rulesEditable = $derived(settings !== null && settings.toolsEditable && !runtimeChanged);
 
+  const cwdChanged = $derived(settings !== null && cwd.trim() !== '' && cwd.trim() !== (settings.cwd ?? ''));
+
   const dirty = $derived(
     settings !== null &&
       (runtimeChanged ||
+        cwdChanged ||
         model.trim() !== (settings.model ?? '') ||
         !same([...skills].sort(), [...settings.skills].sort()) ||
         !same(rules(allow), settings.allow) ||
@@ -75,6 +85,9 @@
         : `The team file is changed now; the seat starts on ${runtime}, with a fresh conversation, the next time the rig is brought up from it.`;
       if (!confirm(`Move ${agent.name} from ${savedRuntime} to ${runtime}?\n\n${how}\n\nThe current conversation is not carried over.`)) return;
     }
+    if (cwdChanged && cwdScope === 'rig' && settings.cwdSharedBy > 1) {
+      if (!confirm(`Move all ${settings.cwdSharedBy} agents of ${agent.rig} that work in ${settings.cwd ?? 'the current folder'} to ${cwd.trim()}?\n\nUsed from each agent's next fresh launch. Files already in the old folder are not moved.`)) return;
+    }
     saving = true;
     saveError = null;
     notes = [];
@@ -83,6 +96,7 @@
       const kept = settings.skills.filter((id) => skills.includes(id));
       const saved = await store.saveSettings(agent.id, {
         ...(runtimeChanged ? { runtime } : {}),
+        ...(cwdChanged ? { cwd: cwd.trim(), cwdScope } : {}),
         model: model.trim() || null,
         skills: [...kept, ...skills.filter((id) => !kept.includes(id))],
         ...(rulesEditable ? { allow: rules(allow), deny: rules(deny) } : {}),
@@ -140,6 +154,21 @@
       </div>
 
       <div class="group">
+        <label for="set-cwd">Working folder</label>
+        <input id="set-cwd" placeholder={settings.cwd === null ? 'Not set in the team file' : ''} maxlength="300" bind:value={cwd} />
+        {#if settings.cwd === '.'}
+          <p class="muted">"." means the folder chosen when the rig was started. Type a full path (/… or ~/…) to fix it.</p>
+        {/if}
+        {#if cwdChanged && settings.cwdSharedBy > 1}
+          <div class="scope" role="radiogroup" aria-label="Who moves to the new folder">
+            <label class="check"><input type="radio" value="agent" bind:group={cwdScope} />Only {agent.name}</label>
+            <label class="check"><input type="radio" value="rig" bind:group={cwdScope} />Everyone in {agent.rig} who works in {settings.cwd ?? 'this folder'} ({settings.cwdSharedBy} agents)</label>
+          </div>
+        {/if}
+        <p class="muted">Where this agent works and saves its files. Used from its next fresh launch; existing files are not moved.</p>
+      </div>
+
+      <div class="group">
         <label for="set-model">Model</label>
         <input id="set-model" list="model-choices" placeholder="Default for {runtime}" maxlength="120" bind:value={model} />
         <datalist id="model-choices">
@@ -184,6 +213,15 @@
         <button type="button" class="ghost" disabled={!dirty || saving} onclick={() => settings && show(settings)}>Discard changes</button>
         <button class="primary" disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save'}</button>
       </div>
+      {#if workspace?.root}
+        <div class="group">
+          <h3>OpenRig records (all rigs)</h3>
+          <p class="muted">
+            Missions, slices and specs are kept in <code>{workspace.root}</code>, shared by every rig on this machine.
+            Change it with <code>rig config set workspace.root &lt;folder&gt;</code>.
+          </p>
+        </div>
+      {/if}
       {#if settings.files.length > 0}
         <p class="muted files">Saved in: {#each settings.files as file (file)}<code>{file}</code>{/each}</p>
       {/if}
@@ -292,6 +330,10 @@
   .primary:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  .scope {
+    display: grid;
+    gap: 4px;
   }
   .params {
     display: grid;

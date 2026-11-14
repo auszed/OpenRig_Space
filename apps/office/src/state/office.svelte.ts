@@ -1,11 +1,12 @@
 import {
-  assignSeats, buildLayout, byAttention, emptySnapshot, groupByTeam, litDesks, locateAgents, whereabouts,
-  type Agent, type AgentSettings, type Layout, type OfficeSnapshot, type OfficeTheme, type QueueItem, type Seat, type SettingsPatch, type SettingsSaved, type TeamGroup, type Whereabouts,
+  assignSeats, buildLayout, byAttention, isOpenTask, emptySnapshot, groupByTeam, litDesks, locateAgents, whereabouts,
+  type Agent, type AgentSettings, type Layout, type OfficeSnapshot, type OfficeTheme, type NewTask, type QueueItem, type Seat, type SettingsPatch, type SettingsSaved, type TeamGroup, type Whereabouts,
 } from '@backoffice/core';
 import type { FurnitureBuilder } from '../scene/build/kit.ts';
 import { themeById } from '../themes.ts';
 
 const THEME_KEY = 'backoffice.theme';
+const BOARD_RIGS_KEY = 'backoffice.board.rigs';
 
 function remembered(key: string): string | null {
   try {
@@ -21,6 +22,9 @@ export class OfficeStore {
   connected = $state(false);
   selectedId = $state<string | null>(null);
   followId = $state<string | null>(null);
+  /** The task board is open, and which rigs it shows (empty: all of them). */
+  boardOpen = $state(false);
+  boardRigs = $state<string[]>(this.rememberedRigs());
   themeId = $state(themeById(new URLSearchParams(location.search).get('theme') ?? remembered(THEME_KEY)).id);
   /** The floor plan, rebuilt only when rigs, pods or head counts change, never on a status change. */
   layout: Layout = $derived.by(() => this.planFor(this.snapshot.agents));
@@ -66,8 +70,54 @@ export class OfficeStore {
     return whereabouts(agent, this.snapshot.queue);
   }
 
+  /** Open tasks this agent owns or sent; finished ones live on the board. */
   tasksFor(agent: Agent): QueueItem[] {
-    return this.snapshot.queue.filter((q) => q.to === agent.session || q.from === agent.session);
+    return this.snapshot.queue.filter((q) => isOpenTask(q.state) && (q.to === agent.session || q.from === agent.session));
+  }
+
+  private rememberedRigs(): string[] {
+    try {
+      const saved = JSON.parse(localStorage.getItem(BOARD_RIGS_KEY) ?? '[]');
+      return Array.isArray(saved) ? saved.filter((r) => typeof r === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Shows the board for these rigs; no rigs means every team. */
+  setBoardRigs(rigs: string[]): void {
+    this.boardRigs = [...new Set(rigs)];
+    try {
+      localStorage.setItem(BOARD_RIGS_KEY, JSON.stringify(this.boardRigs));
+    } catch {
+      // Without storage the filter lasts for this visit only.
+    }
+  }
+
+  openBoard(rig?: string): void {
+    if (rig) this.setBoardRigs([rig]);
+    this.boardOpen = true;
+  }
+
+  async createTask(task: NewTask): Promise<void> {
+    await this.post('/api/tasks', task, 'Task not created');
+  }
+
+  async cancelTask(id: string, reason: string): Promise<void> {
+    await this.post(`/api/tasks/${encodeURIComponent(id)}/cancel`, { reason }, 'Task not cancelled');
+  }
+
+  async readWorkspace(): Promise<Record<string, string> | null> {
+    const res = await fetch('/api/openrig/workspace');
+    const body = await res.json().catch(() => ({}));
+    return res.ok ? (body.workspace ?? null) : null;
+  }
+
+  private async post(url: string, payload: unknown, failure: string): Promise<unknown> {
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? `${failure} (${res.status})`);
+    return body;
   }
 
   setTheme(id: string): void {

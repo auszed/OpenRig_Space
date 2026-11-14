@@ -24,6 +24,10 @@ export interface AgentSettings {
   runtimes: HarnessChoice[];
   /** Null means no model is set for this agent and the runtime's own default applies. */
   model: string | null;
+  /** The working folder as the team file writes it ("~/work", ".", …), or null when it names none. */
+  cwd: string | null;
+  /** How many members of the rig share that folder, this one included. */
+  cwdSharedBy: number;
   skills: string[];
   availableSkills: string[];
   /** Tool rules only exist for some runtimes. */
@@ -34,8 +38,13 @@ export interface AgentSettings {
   files: string[];
 }
 
+export type CwdScope = 'agent' | 'rig';
+
 export interface SettingsPatch {
   runtime?: string;
+  cwd?: string;
+  /** "rig" also moves every member of the rig that shares this agent's current folder. */
+  cwdScope?: CwdScope;
   model?: string | null;
   skills?: string[];
   allow?: string[];
@@ -105,6 +114,17 @@ export function cleanPatch(input: unknown): SettingsPatch {
     if (!RUNTIME_ID.test(runtime)) throw new SettingsError('That does not look like a harness name.');
     patch.runtime = runtime;
   }
+  if ('cwd' in raw) {
+    const cwd = typeof raw.cwd === 'string' ? raw.cwd.trim() : '';
+    if (!cwd || cwd.length > 300 || /[\r\n"\\]/.test(cwd) || !/^(\/|~\/)/.test(cwd) || cwd.split('/').includes('..')) {
+      throw new SettingsError('The folder must be a full path starting with / or ~/, without "..".');
+    }
+    patch.cwd = cwd.length > 1 ? cwd.replace(/\/+$/, '') : cwd;
+  }
+  if ('cwdScope' in raw) {
+    if (raw.cwdScope !== 'agent' && raw.cwdScope !== 'rig') throw new SettingsError('cwdScope must be "agent" or "rig".');
+    patch.cwdScope = raw.cwdScope;
+  }
   if ('skills' in raw) patch.skills = stringList(raw.skills, 'skills');
   if ('allow' in raw) patch.allow = stringList(raw.allow, 'allowed tools');
   if ('deny' in raw) patch.deny = stringList(raw.deny, 'denied tools');
@@ -130,6 +150,8 @@ export class MemorySettings implements SettingsStore {
       runtime: s.runtime ?? 'claude-code',
       runtimes: MOCK_RUNTIMES,
       model: s.model ?? null,
+      cwd: s.cwd ?? '~/mock-project',
+      cwdSharedBy: 4,
       skills: s.skills ?? ['systematic-debugging'],
       availableSkills: MOCK_SKILLS,
       toolsEditable: (s.runtime ?? 'claude-code') === 'claude-code',
