@@ -1,5 +1,5 @@
 import {
-  assignSeats, byAttention, defaultLayout, emptySnapshot, groupByTeam, litDesks, locateAgents, whereabouts,
+  assignSeats, buildLayout, byAttention, emptySnapshot, groupByTeam, litDesks, locateAgents, whereabouts,
   type Agent, type AgentSettings, type Layout, type OfficeSnapshot, type OfficeTheme, type QueueItem, type Seat, type SettingsPatch, type SettingsSaved, type TeamGroup, type Whereabouts,
 } from '@backoffice/core';
 import type { FurnitureBuilder } from '../scene/build/kit.ts';
@@ -22,7 +22,9 @@ export class OfficeStore {
   selectedId = $state<string | null>(null);
   followId = $state<string | null>(null);
   themeId = $state(themeById(new URLSearchParams(location.search).get('theme') ?? remembered(THEME_KEY)).id);
-  readonly layout: Layout = defaultLayout();
+  /** The floor plan, rebuilt only when rigs, pods or head counts change, never on a status change. */
+  layout: Layout = $derived.by(() => this.planFor(this.snapshot.agents));
+  private plan: { key: string; layout: Layout } | null = null;
 
   theme: OfficeTheme<FurnitureBuilder> = $derived(themeById(this.themeId));
   agents: Agent[] = $derived([...this.snapshot.agents].sort(byAttention));
@@ -48,6 +50,13 @@ export class OfficeStore {
   private socket: WebSocket | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
+
+  /** Same pods and head counts, same layout object, so nothing downstream rebuilds the building. */
+  private planFor(agents: Agent[]): Layout {
+    const key = agents.map((a) => `${a.rig}\u0000${a.pod}`).sort().join('\u0001');
+    if (this.plan?.key !== key) this.plan = { key, layout: buildLayout(agents) };
+    return this.plan.layout;
+  }
 
   colorOf(agent: Agent): string {
     return this.podColor.get(`${agent.rig}/${agent.pod}`) ?? this.theme.podColors[0]!;

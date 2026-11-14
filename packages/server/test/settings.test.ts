@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemorySettings, MockSource, type AgentSettings, type SettingsSaved } from '@backoffice/core';
 import { startServer, type OfficeServer } from '../src/server.ts';
-import { TeamFileSettings } from '../src/settings.ts';
+import { HarnessCatalog, opencodeLauncher, TeamFileSettings, type RigRunner } from '../src/settings.ts';
 
 const RIG = `version: "0.2"
 name: growth
@@ -62,6 +62,23 @@ let dir: string;
 let calls: string[][];
 let rules: unknown;
 let store: TeamFileSettings;
+/** What the fake daemon says about community harness presets, and the folder it reads them from. */
+let presets: Array<{ name: string; usable: boolean; problem?: string }>;
+let presetDir: string;
+
+const daemon: RigRunner = async (args) =>
+  args[0] === 'community-harness'
+    ? { ok: true, output: JSON.stringify({ dir: presetDir, harnesses: presets }) }
+    : { ok: false, output: 'unexpected' };
+
+const catalog = (env: Record<string, string> = { BACKOFFICE_HARNESSES: 'claude-code,codex,opencode' }) =>
+  new HarnessCatalog({
+    env,
+    run: daemon,
+    which: (p) => (p === 'claude' || p === 'opencode' ? `/usr/bin/${p}` : null),
+    listModels: async () => ['opencode/big-pickle'],
+    home: dir,
+  });
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'teams-'));
@@ -75,8 +92,11 @@ beforeEach(async () => {
   }
   calls = [];
   rules = null;
+  presets = [];
+  presetDir = join(dir, 'openrig/community-harnesses');
   store = new TeamFileSettings({
     teamsDir: dir,
+    harnesses: catalog(),
     run: async (args) => {
       calls.push(args);
       const at = args.indexOf('--rules');
@@ -164,7 +184,7 @@ describe('agent settings in team files', () => {
   });
 
   test('a seat that refuses the model is reported, the file still changes', async () => {
-    const failing = new TeamFileSettings({ teamsDir: dir, run: async () => ({ ok: false, output: 'seat not found' }) });
+    const failing = new TeamFileSettings({ teamsDir: dir, harnesses: catalog(), run: async () => ({ ok: false, output: 'seat not found' }) });
     const saved = await failing.write(demo, { model: 'sonnet' });
     expect(saved.settings.model).toBe('sonnet');
     expect(saved.notes.join(' ')).toContain('seat not found');
@@ -183,6 +203,99 @@ describe('agent settings in team files', () => {
     expect((await store.read({ ...demo, name: 'build.ghost' })).editable).toBe(false);
     expect((await store.read({ ...demo, rig: '../growth' })).editable).toBe(false);
     await expect(store.write({ ...demo, rig: 'kernel' }, { model: 'opus' })).rejects.toThrow();
+  });
+});
+
+describe('harness', () => {
+  test('the file\'s harness and the offered ones are read', async () => {
+    const s = await store.read(demo);
+    expect(s.runtime).toBe('claude-code');
+    expect(s.runtimes.map((h) => [h.id, h.liveSwitch])).toEqual([['claude-code', true], ['codex', true], ['opencode', false]]);
+    expect(s.runtimes.find((h) => h.id === 'opencode')!.models).toEqual(['opencode/big-pickle']);
+  });
+
+  test('moving to a built-in harness rewrites one line and switches the running seat with the model', async () => {
+    const saved = await store.write(demo, { runtime: 'codex', model: 'gpt-6' });
+    expect(saved.settings.runtime).toBe('codex');
+    const text = await rigText();
+    expect(text).toContain('        runtime: codex\n        profile: default\n        cwd: "~/work" # shared folder');
+    expect(text).toContain('        model: gpt-6');
+    expect(calls).toEqual([
+      ['seat', 'set-runtime', 'build-demo@growth', '--runtime', 'codex', '--reason', 'Set in OpenRig Space', '--model', 'gpt-6'],
+    ]);
+    expect(saved.settings.toolsEditable).toBe(false);
+  });
+
+  test('moving to opencode installs its preset once, writes the file and leaves the running seat alone', async () => {
+    const daemonSeesIt: RigRunner = async (args) => {
+      if (args[0] !== 'community-harness') return { ok: false, output: '' };
+      const installed = await stat(join(presetDir, 'opencode.yaml')).then(() => true, () => false);
+      return { ok: true, output: JSON.stringify({ dir: presetDir, harnesses: installed ? [{ name: 'opencode', usable: true }] : [] }) };
+    };
+    const harnesses = new HarnessCatalog({
+      env: { BACKOFFICE_HARNESSES: 'claude-code,opencode' }, run: daemonSeesIt, which: (p) => (p === 'opencode' ? '/usr/bin/opencode' : null), home: dir,
+    });
+    const local = new TeamFileSettings({ teamsDir: dir, harnesses, run: async (args) => (calls.push(args), { ok: true, output: '' }) });
+    const saved = await local.write(demo, { runtime: 'opencode', model: 'opencode/big-pickle' });
+    expect(saved.settings.runtime).toBe('opencode');
+    expect(await rigText()).toContain('        model: opencode/big-pickle');
+    expect(calls).toEqual([]);
+    const preset = await readFile(join(presetDir, 'opencode.yaml'), 'utf8');
+    expect(preset).toContain('format: 1\nname: opencode\n');
+    expect(preset).toContain('passes_model: true');
+    expect(((await stat(join(presetDir, 'opencode-launch.sh'))).mode & 0o777).toString(8)).toBe('755');
+    expect(saved.notes.join(' ')).toContain('Installed opencode for OpenRig');
+    expect(saved.notes.join(' ')).toContain('rig up');
+
+    // Second time round the preset is there, so nothing is written again.
+    await writeFile(join(presetDir, 'opencode.yaml'), '# mine\n');
+    const other = { ...demo, name: 'orch.lead', session: 'orch-lead@growth', pod: 'orch' };
+    const again = await local.write(other, { runtime: 'opencode' });
+    expect(again.notes.join(' ')).not.toContain('Installed');
+    expect(await readFile(join(presetDir, 'opencode.yaml'), 'utf8')).toBe('# mine\n');
+  });
+
+  test('a preset OpenRig refuses is removed and nothing else is written', async () => {
+    let wrote = false;
+    const refusing: RigRunner = async () => {
+      const harnesses = wrote ? [{ name: 'opencode', usable: false, problem: 'bad command' }] : [];
+      wrote = true;
+      return { ok: true, output: JSON.stringify({ dir: presetDir, harnesses }) };
+    };
+    const harnesses = new HarnessCatalog({ env: { BACKOFFICE_HARNESSES: 'opencode' }, run: refusing, which: () => '/usr/bin/opencode', home: dir });
+    const local = new TeamFileSettings({ teamsDir: dir, harnesses, run: async () => ({ ok: true, output: '' }) });
+    await expect(local.write(demo, { runtime: 'opencode' })).rejects.toThrow('bad command');
+    expect(await rigText()).toBe(RIG);
+    expect(await stat(join(presetDir, 'opencode.yaml')).then(() => true, () => false)).toBe(false);
+  });
+
+  test('a harness that is not offered is refused', async () => {
+    await expect(store.write(demo, { runtime: 'pi' })).rejects.toThrow('not a harness this office offers');
+    expect(await rigText()).toBe(RIG);
+  });
+
+  test('a quick switch reports the move', async () => {
+    const saved = await store.write(demo, { runtime: 'codex' });
+    expect(saved.notes.join(' ')).toContain('moved to codex');
+  });
+
+  test('without BACKOFFICE_HARNESSES, installed built-ins, usable presets and opencode are offered', async () => {
+    presets = [{ name: 'goose', usable: true }, { name: 'broken', usable: false, problem: 'x' }];
+    const offered = await catalog({ BACKOFFICE_MODELS_GOOSE: 'a/b, c/d' }).list();
+    expect(offered.map((h) => h.id)).toEqual(['claude-code', 'goose', 'opencode']);
+    expect(offered.find((h) => h.id === 'goose')!.models).toEqual(['a/b', 'c/d']);
+    expect(offered.find((h) => h.id === 'claude-code')!.models).toContain('opus');
+  });
+
+  test('the opencode launcher hands the seat model over as inline config', async () => {
+    const script = join(dir, 'launch.sh');
+    await writeFile(script, opencodeLauncher('/usr/bin/env'), { mode: 0o755 });
+    const run = (model: string) =>
+      Bun.spawnSync([script], { env: { PATH: process.env.PATH!, OPENRIG_MODEL: model } }).stdout.toString();
+    const line = (out: string) => out.split('\n').find((l) => l.startsWith('OPENCODE_CONFIG_CONTENT='));
+    expect(line(run('opencode/big-pickle'))).toBe('OPENCODE_CONFIG_CONTENT={"model":"opencode/big-pickle"}');
+    expect(JSON.parse(line(run('we"ird\\id'))!.slice(24))).toEqual({ model: 'we"ird\\id' });
+    expect(line(Bun.spawnSync([script], { env: { PATH: process.env.PATH! } }).stdout.toString())).toBeUndefined();
   });
 });
 
@@ -206,6 +319,9 @@ describe('settings routes', () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as SettingsSaved).settings.allow).toEqual(['WebSearch']);
     expect(((await (await fetch(base)).json()) as AgentSettings).model).toBe('opus');
+    const moved = (await (await put({ runtime: 'opencode', model: 'opencode/big-pickle' })).json()) as SettingsSaved;
+    expect(moved.settings.runtime).toBe('opencode');
+    expect(moved.settings.toolsEditable).toBe(false);
   });
 
   test('refuses what it should', async () => {
@@ -214,6 +330,8 @@ describe('settings routes', () => {
     expect((await put({ allow: 'WebSearch' })).status).toBe(400);
     expect((await put({ skills: ['made-up'] })).status).toBe(400);
     expect((await put([])).status).toBe(400);
+    expect((await put({ runtime: 'rm -rf' })).status).toBe(400);
+    expect((await put({ runtime: 'goose' })).status).toBe(400);
     expect((await fetch(base.replace('mock-2', 'nobody'))).status).toBe(404);
     expect((await fetch(base, { method: 'DELETE' })).status).toBe(405);
   });

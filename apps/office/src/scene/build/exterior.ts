@@ -12,9 +12,11 @@ export function buildExterior(kit: Kit, layout: Layout): THREE.Group {
   const halfW = layout.width / 2;
   const halfD = layout.depth / 2;
   const ground = -PLINTH;
+  // The office grows towards the front as rigs grow; the campus moves out of its way.
+  const grow = Math.max(0, halfD - 14);
 
   g.add(kit.box('plinth', layout.width + 1.6, PLINTH - 0.04, layout.depth + 1.6, 0, ground, 0));
-  const lawn = kit.cyl('grass', 95, 0.3, 0, ground - 0.3, 0);
+  const lawn = kit.cyl('grass', 95 + grow, 0.3, 0, ground - 0.3, 0);
   lawn.castShadow = false;
   g.add(lawn);
 
@@ -28,12 +30,13 @@ export function buildExterior(kit: Kit, layout: Layout): THREE.Group {
     (Math.abs(x) < 4.5 && z > 0) ||                                  // the entrance path
     Math.abs(z - (halfD + 20)) < 3.5;                                // the cross path
 
-  const buildings: Array<[x: number, z: number, w: number, h: number, d: number]> = [
+  type Block = [x: number, z: number, w: number, h: number, d: number];
+  const buildings = ([
     [-46, -34, 20, 9, 13],
     [40, -40, 15, 15, 15],
     [52, 6, 12, 7, 22],
     [-52, 14, 12, 11, 16],
-  ];
+  ] as Block[]).map(([x, z, w, h, d]): Block => [x, z + Math.sign(z) * grow, w, h, d]);
   for (const [x, z, w, h, d] of buildings) {
     g.add(kit.box('building', w, h, d, x, ground, z));
     for (let y = 1.4; y < h - 0.8; y += 2.6) g.add(kit.box('dark', w + 0.06, 0.9, d + 0.06, x, ground + y, z));
@@ -45,7 +48,7 @@ export function buildExterior(kit: Kit, layout: Layout): THREE.Group {
   let planted = 0;
   for (let tries = 0; planted < 46 && tries < 600; tries++) {
     const angle = random() * Math.PI * 2;
-    const radius = 22 + random() * 62;
+    const radius = 22 + grow + random() * 62;
     const x = Math.cos(angle) * radius;
     const z = Math.sin(angle) * radius;
     // Keep the side the camera looks in from open, so no tree stands between the viewer and the desks.
