@@ -29,6 +29,82 @@
   const desks = $derived(store.layout.zones.flatMap(desksForZone));
   const SCREEN = new THREE.PlaneGeometry(MONITOR.w, MONITOR.h);
 
+  // --- Screens that light the room (themes with `lighting.screenGlow`) -----------------------
+  const glow = $derived(store.theme.lighting.screenGlow ?? null);
+  /** One glowing screen material per colour; desk screens take them in turn. */
+  const glowMats = $derived(
+    (glow?.colors ?? []).map(
+      (color) =>
+        new THREE.MeshStandardMaterial({
+          color: '#0b0d12',
+          roughness: 0.4,
+          emissive: color,
+          emissiveIntensity: store.theme.materials.screenOn.emissiveIntensity ?? 2,
+        }),
+    ),
+  );
+  $effect(() => {
+    const old = glowMats;
+    return () => old.forEach((m) => m.dispose());
+  });
+  const screenMat = (index: number) => glowMats[index % Math.max(glowMats.length, 1)] ?? mats.screenOn;
+
+  /**
+   * A fixed pool of lights, always in the scene. three.js recompiles every material when the
+   * number of lights changes, so lights are switched by intensity rather than added and removed.
+   * Beyond the pool, screens still glow but cast no light.
+   */
+  const POOL = 16;
+  const pool = Array.from({ length: POOL }, () => {
+    const light = new THREE.PointLight('#ffffff', 0, 4, 2);
+    light.castShadow = false;
+    return light;
+  });
+  interface Glow { x: number; y: number; z: number; color: string; strength: number }
+  const glows = $derived.by((): Glow[] => {
+    if (!glow) return [];
+    // Wall screens hang on a back wall and face +z; their light falls into the room in front.
+    const walls = store.layout.furniture
+      .filter((f) => f.kind === 'screenWall')
+      .map((f) => ({ x: f.x, y: 1.5, z: f.z + 1.1, color: glow.colors[0]!, strength: 1.6 }));
+    const lit = desks.flatMap((desk, i) =>
+      store.litDesks.has(desk.id)
+        ? [{
+            // Just in front of the monitor, towards whoever sits at the desk.
+            x: desk.x + Math.sin(desk.rot) * (MONITOR.z + 0.4),
+            y: MONITOR.y + 0.2,
+            z: desk.z + Math.cos(desk.rot) * (MONITOR.z + 0.4),
+            color: glow.colors[i % glow.colors.length]!,
+            strength: 1,
+          }]
+        : [],
+    );
+    return [...walls, ...lit].slice(0, POOL);
+  });
+  $effect(() => {
+    pool.forEach((light, i) => {
+      const g = glows[i];
+      light.intensity = g && glow ? glow.intensity * g.strength : 0;
+      light.distance = glow?.distance ?? 4;
+      if (g) {
+        light.position.set(g.x, g.y, g.z);
+        light.color.set(g.color);
+      }
+      light.userData.base = light.intensity;
+    });
+    invalidate();
+  });
+  // A slow, slight flicker, different for each light, so the room feels lived in.
+  let clock = 0;
+  useTask((delta) => {
+    if (!glow) return;
+    clock += delta;
+    pool.forEach((light, i) => {
+      const base = (light.userData.base as number) ?? 0;
+      if (base > 0) light.intensity = base * (1 + 0.06 * Math.sin(clock * (1.3 + (i % 5) * 0.37) + i * 2.1));
+    });
+  });
+
   const pmrem = new THREE.PMREMGenerator(renderer);
   const roomLight = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   pmrem.dispose();
@@ -96,6 +172,9 @@
 </T.OrthographicCamera>
 
 <T is={lights} />
+{#if glow}
+  {#each pool as light, i (i)}<T is={light} />{/each}
+{/if}
 <T is={office} />
 <PostFx theme={store.theme} />
 
@@ -115,11 +194,11 @@
 {/each}
 
 <!-- A desk's screen is lit only while its owner is working at it. -->
-{#each desks as desk (desk.id)}
+{#each desks as desk, i (desk.id)}
   {#if store.litDesks.has(desk.id)}
     <T.Mesh
       geometry={SCREEN}
-      material={mats.screenOn}
+      material={screenMat(i)}
       position={[
         desk.x + Math.sin(desk.rot) * (MONITOR.z + 0.002),
         MONITOR.y + MONITOR.h / 2,

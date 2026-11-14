@@ -37,6 +37,11 @@ export interface OfficeTheme<FurnitureBuilder = unknown> {
     sky: { color: string; ground: string; intensity: number };
     /** Strength of the reflected room light on PBR surfaces. */
     environment: number;
+    /**
+     * Lit screens cast their own coloured light onto desk, chair and floor. Desk screens take the
+     * colours in turn; wall screens take the first. Leave out for screens that only glow.
+     */
+    screenGlow?: { colors: string[]; intensity: number; distance: number };
   };
   postFx: {
     bloom: { intensity: number; threshold: number };
