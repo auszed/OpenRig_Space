@@ -1,13 +1,17 @@
 import { resolve, sep } from 'node:path';
 import {
-  cleanPatch, emptySnapshot, parsePromptOptions, SettingsError,
-  type OfficeSnapshot, type OfficeSource, type SettingsStore,
+  cleanPatch, cleanTask, emptySnapshot, isOpenTask, parsePromptOptions, SettingsError, TASK_ID, TaskError,
+  type OfficeSnapshot, type OfficeSource, type SettingsStore, type TaskStore,
 } from '@backoffice/core';
 
 export interface ServerOptions {
   source: OfficeSource;
   /** Where agent settings are read and saved. Without it the settings routes answer 404. */
   settings?: SettingsStore;
+  /** Where tasks from the board are created and cancelled. Without it the task routes answer 404. */
+  tasks?: TaskStore;
+  /** OpenRig's machine-wide folders, shown read-only in the settings. */
+  workspace?: () => Promise<Record<string, string> | null>;
   port: number;
   /** Stays on the loopback address unless explicitly changed. */
   hostname?: string;
@@ -121,6 +125,39 @@ export function startServer(opts: ServerOptions): OfficeServer {
         return srv.upgrade(req) ? undefined : json({ error: 'Expected a WebSocket.' }, 400);
       }
       if (path === '/api/office' && req.method === 'GET') return json(snapshot);
+
+      if (path === '/api/openrig/workspace' && req.method === 'GET') {
+        return json({ workspace: opts.workspace ? await opts.workspace() : null });
+      }
+
+      const taskRoute = path.match(/^\/api\/tasks(?:\/([^/]+)\/(cancel))?$/);
+      if (taskRoute) {
+        if (!opts.tasks) return json({ error: 'The task board is not available on this server.' }, 404);
+        if (req.method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
+        if (!req.headers.get('content-type')?.startsWith('application/json')) return json({ error: 'Send JSON.' }, 415);
+        const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
+        try {
+          if (!taskRoute[1]) {
+            const task = cleanTask(body);
+            if (!snapshot.agents.some((a) => a.session === task.destination)) {
+              return json({ error: 'That agent is not in the office right now.' }, 404);
+            }
+            const created = await opts.tasks.create(task);
+            void refresh();
+            return json({ ok: true, ...created });
+          }
+          const id = decodeURIComponent(taskRoute[1]);
+          const row = TASK_ID.test(id) ? snapshot.queue.find((q) => q.id === id) : undefined;
+          if (!row) return json({ error: 'No such task on the board.' }, 404);
+          if (!isOpenTask(row.state)) return json({ error: 'That task is already finished.' }, 409);
+          const reason = typeof body?.reason === 'string' ? body.reason.slice(0, 500) : null;
+          await opts.tasks.cancel(id, reason);
+          void refresh();
+          return json({ ok: true });
+        } catch (err) {
+          return json({ error: (err as Error).message }, err instanceof TaskError ? err.status : 502);
+        }
+      }
 
       const agentRoute = path.match(/^\/api\/agents\/([^/]+)\/(screen|message|answer|settings)$/);
       if (agentRoute) {

@@ -29,6 +29,8 @@ export interface QueueItem {
   state: string;
   from: string;
   to: string;
+  /** The rig of the seat that owns the row (the part of `to` after "@"), or null. */
+  rig: string | null;
   priority: string | null;
   blockedOn: string | null;
   updatedAt: string;

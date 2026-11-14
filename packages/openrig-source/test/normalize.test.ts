@@ -45,6 +45,16 @@ describe('normalize', () => {
     expect(item!.summary).toHaveLength(300);
   });
 
+  test('queue rows carry their rig, and finished rows drop off after a week', () => {
+    const now = Date.parse('2026-11-14T12:00:00Z');
+    const rows = normalizeQueue([
+      { qitemId: 'open-old', state: 'pending', destinationSession: 'dev-build@duo', tsUpdated: '2026-01-01T00:00:00Z' },
+      { qitemId: 'done-new', state: 'done', destinationSession: 'a@growth', tsUpdated: '2026-11-13T00:00:00Z' },
+      { qitemId: 'done-old', state: 'done', destinationSession: 'a@growth', tsUpdated: '2026-11-01T00:00:00Z' },
+    ], now);
+    expect(rows.map((r) => [r.id, r.rig])).toEqual([['open-old', 'duo'], ['done-new', 'growth']]);
+  });
+
   test('event stream blocks are parsed', () => {
     expect(parseEvent('data: {"a":1}\nid: 7')).toEqual({ id: '7', data: '{"a":1}' });
     expect(parseEvent(': keep-alive')).toEqual({ id: null, data: null });

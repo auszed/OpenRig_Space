@@ -32,11 +32,33 @@ office from your own computer, see [Open it from your PC](#open-it-from-your-pc-
 | `OPENRIG_TERMINAL_BEARER_TOKEN` | unset | Only if your daemon was started with tokens. |
 | `BACKOFFICE_HARNESSES` | what is installed | Harnesses an agent can be moved to in its Settings tab, e.g. `claude-code,opencode`. Unset: every installed built-in (`claude-code`, `codex`, `pi`), each usable OpenRig community harness, and `opencode` if it is installed. |
 | `BACKOFFICE_MODELS_<HARNESS>` | unset | Models suggested for one harness, e.g. `BACKOFFICE_MODELS_OPENCODE=opencode/big-pickle,anthropic/claude-sonnet-5-5`. Unset: Claude Code suggests fable/opus/sonnet/haiku and opencode lists its own (`opencode models`). Any id can still be typed. |
+| `BACKOFFICE_PERSON` | OpenRig's default person | Who tasks created on the board come from, e.g. `hanns@external` (see `rig gateway participants`). |
 
 Controls: drag to move, scroll to zoom, right-drag to turn, click an agent (or its row in the list)
 to open it, `Follow` to keep the camera on it, `Esc` to close. The panel opens on the agent's
 **Terminal** tab; its **Settings** tab lists the agent's parameters (rig, pod, session, harness,
 model, status, context, work) and lets you change its harness, model, skills and tool rules.
+
+### Task board
+
+**Task board** in the top bar opens one board for every team. The chips at the top filter it to one or
+more rigs (the choice is remembered), and **Tasks** next to a rig in the list opens it filtered to that rig.
+The columns are OpenRig's queue states: To do, In progress, Blocked, and Done for the last seven days.
+
+**New task** puts a row in OpenRig's queue for the agent you pick, from you, and OpenRig tells the agent.
+It defaults to the team's lead, who shares the work out in the team. A team without a lead (such as
+`duo`) defaults to its first seat: in `duo` that is `dev.build`, who builds and hands the change to
+`dev.review`. The agents claim, move and close their own tasks; the board shows what they did. The one
+thing you can do to a task yourself is **Cancel** it (closed in OpenRig as canceled, with your reason).
+
+### Where agents keep their files
+
+The Settings tab's **Working folder** is the agent's `cwd:` in its rig's `rig.yaml`: where it works
+and writes its files. When other agents of the rig share the folder, you choose whether only this agent
+moves or all of them; agents with a folder of their own stay where they are. OpenRig is told too
+(`rig seat set-cwd`), and the folder is used from each agent's next fresh launch. Files already in the old
+folder are not moved. OpenRig's own records (missions, slices, specs) are kept in one folder for all
+rigs, shown under the form; change that with `rig config set workspace.root <folder>`.
 
 ### Changing an agent's harness
 
