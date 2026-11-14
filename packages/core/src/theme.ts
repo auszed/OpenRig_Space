@@ -48,6 +48,8 @@ export interface OfficeTheme<FurnitureBuilder = unknown> {
     ambientOcclusion: { enabled: boolean; intensity: number; radius: number };
     vignette: number;
   };
+  /** Draws the walkways as glowing lines on the floor. Leave out to keep them invisible. */
+  walkways?: { color: string; intensity: number };
   /**
    * Optional replacements for individual pieces of furniture. The office app
    * ships a builder for every kind; a theme only lists the ones it redraws.

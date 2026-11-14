@@ -56,6 +56,7 @@ export const nightTheme: OfficeTheme = {
     environment: 0.25,
     screenGlow: { colors: ['#ff2d55', '#3b82f6'], intensity: 3, distance: 4.5 },
   },
+  walkways: { color: '#ff2d55', intensity: 2.4 },
   postFx: {
     bloom: { intensity: 1.1, threshold: 0.5 },
     ambientOcclusion: { enabled: true, intensity: 2, radius: 1.4 },

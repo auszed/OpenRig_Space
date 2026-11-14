@@ -29,6 +29,37 @@
   const desks = $derived(store.layout.zones.flatMap(desksForZone));
   const SCREEN = new THREE.PlaneGeometry(MONITOR.w, MONITOR.h);
 
+  // --- Neon walkways (themes with `walkways`) -------------------------------------------------
+  const NEON_WIDTH = 0.06;
+  const neon = $derived.by(() => {
+    const style = store.theme.walkways;
+    if (!style) return null;
+    const material = new THREE.MeshStandardMaterial({
+      color: '#0b0d12',
+      roughness: 0.5,
+      emissive: style.color,
+      emissiveIntensity: style.intensity,
+    });
+    const group = new THREE.Group();
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    for (const w of store.layout.walkways) {
+      const length = Math.hypot(w.x2 - w.x1, w.z2 - w.z1) + NEON_WIDTH;
+      const alongX = Math.abs(w.z2 - w.z1) < 1e-6;
+      const strip = new THREE.Mesh(box, material);
+      strip.scale.set(alongX ? length : NEON_WIDTH, 0.008, alongX ? NEON_WIDTH : length);
+      strip.position.set((w.x1 + w.x2) / 2, 0.018, (w.z1 + w.z2) / 2);
+      group.add(strip);
+    }
+    return { group, material, box };
+  });
+  $effect(() => {
+    const old = neon;
+    return () => {
+      old?.material.dispose();
+      old?.box.dispose();
+    };
+  });
+
   // --- Screens that light the room (themes with `lighting.screenGlow`) -----------------------
   const glow = $derived(store.theme.lighting.screenGlow ?? null);
   /** One glowing screen material per colour; desk screens take them in turn. */
@@ -176,6 +207,7 @@
   {#each pool as light, i (i)}<T is={light} />{/each}
 {/if}
 <T is={office} />
+{#if neon}<T is={neon.group} />{/if}
 <PostFx theme={store.theme} />
 
 {#each store.layout.rooms as room (room.id)}

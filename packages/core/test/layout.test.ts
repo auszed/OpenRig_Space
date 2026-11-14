@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   assignSeats, behaviorFor, buildLayout, byAttention, defaultLayout, desksForZone, groupByTeam, isLead, litDesks, locateAgents,
-  MockSource, route, waitingOnPr, whereabouts,
+  floorGrid, MockSource, route, straighten, waitingOnPr, whereabouts,
 } from '../src/index.ts';
 import type { Agent, QueueItem } from '../src/index.ts';
 
@@ -187,17 +187,67 @@ describe('where agents are', () => {
     expect(after.get('3')).toEqual(home.get('3')!);
   });
 
-  test('walking into a room goes through its door', () => {
-    layout = buildLayout([]);
+  test('walking keeps to straight lines, goes through doors and never crosses furniture', () => {
+    const agents = Array.from({ length: 24 }, (_, i) => agent(String(i), 'r', `p${i % 6}`));
+    layout = buildLayout([...agents, agent('k1', 'kernel', 'op'), agent('k2', 'kernel', 'q')]);
+    const grid = floorGrid(layout);
+    const home = assignSeats(agents, layout).seats;
     const glass = -layout.depth / 2 + 7;
-    const lounge = layout.lounge.spots[0]!;
-    const review = layout.review.spots[0]!;
-    const path = route(lounge, review, layout);
-    expect(path).toHaveLength(3);
-    expect(path[0]!.x).toBe(-5);
-    expect(path[0]!.z).toBeGreaterThan(glass);
-    expect(path[1]!.z).toBeLessThan(glass);
-    expect(route(lounge, layout.lounge.spots[5]!, layout)).toHaveLength(1);
+    const places = [...home.values(), ...layout.lounge.spots, ...layout.review.spots];
+    const started = performance.now();
+    let routes = 0;
+    for (let i = 0; i < places.length; i += 3) {
+      const from = places[i]!;
+      const to = places[(i * 7 + 5) % places.length]!;
+      const path = route(from, to, layout);
+      routes++;
+      const points = [from, ...path];
+      expect(points.at(-1)).toEqual(to);
+      for (let k = 1; k < points.length; k++) {
+        const [a, b] = [points[k - 1]!, points[k]!];
+        // Along one axis only.
+        expect(Math.abs(a.x - b.x) < 1e-6 || Math.abs(a.z - b.z) < 1e-6).toBe(true);
+        // Away from the two seats, every step is on open floor.
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        for (let t = 0; t <= len; t += 0.1) {
+          const p = { x: a.x + ((b.x - a.x) * t) / len, z: a.z + ((b.z - a.z) * t) / len };
+          const nearEnd = Math.hypot(p.x - from.x, p.z - from.z) < 2.6 || Math.hypot(p.x - to.x, p.z - to.z) < 2.6;
+          if (!nearEnd) expect(grid.isFree(...grid.cellOf(p))).toBe(true);
+        }
+      }
+    }
+    expect((performance.now() - started) / routes).toBeLessThan(40);
+
+    // From the lounge into PR review: through its door, which sits on the glass at x = -5.
+    const path = route(layout.lounge.spots[0]!, layout.review.spots[0]!, layout);
+    const crossing = [layout.lounge.spots[0]!, ...path].findIndex((p, k, all) => k > 0 && (all[k - 1]!.z - glass) * (p.z - glass) < 0);
+    expect(crossing).toBeGreaterThan(0);
+    expect(Math.abs([layout.lounge.spots[0]!, ...path][crossing]!.x - -5)).toBeLessThan(0.7);
+  });
+
+  test('every layout has walkways along x or z, inside the building, never over furniture', () => {
+    for (const [n, pods] of [[0, 1], [10, 4], [60, 5], [120, 9], [200, 7]] as const) {
+      const l = buildLayout(Array.from({ length: n }, (_, i) => agent(String(i), 'r', `p${i % pods}`)));
+      const grid = floorGrid(l);
+      expect(l.walkways.length).toBeGreaterThan(5);
+      for (const w of l.walkways) {
+        expect(w.x1 === w.x2 || w.z1 === w.z2).toBe(true);
+        const steps = Math.ceil(Math.hypot(w.x2 - w.x1, w.z2 - w.z1) / 0.1);
+        for (let s = 0; s <= steps; s++) {
+          const [c, r] = grid.cellOf({ x: w.x1 + ((w.x2 - w.x1) * s) / steps, z: w.z1 + ((w.z2 - w.z1) * s) / steps });
+          expect(grid.isFree(c, r)).toBe(true);
+        }
+        for (const p of [{ x: w.x1, z: w.z1 }, { x: w.x2, z: w.z2 }]) {
+          expect(Math.abs(p.x)).toBeLessThanOrEqual(l.width / 2);
+          expect(Math.abs(p.z)).toBeLessThanOrEqual(l.depth / 2);
+        }
+      }
+    }
+  });
+
+  test('straighten turns a diagonal into an L and drops points in the middle of a run', () => {
+    expect(straighten([{ x: 0, z: 0 }, { x: 2, z: 3 }])).toEqual([{ x: 0, z: 0 }, { x: 0, z: 3 }, { x: 2, z: 3 }]);
+    expect(straighten([{ x: 0, z: 0 }, { x: 1, z: 0 }, { x: 2, z: 0 }])).toEqual([{ x: 0, z: 0 }, { x: 2, z: 0 }]);
   });
 
   test('teams are grouped by rig then pod, lead first', () => {

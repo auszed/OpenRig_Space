@@ -130,6 +130,11 @@ helpers) has its own glass room, with a bench outside it if it has more than eig
 gets another group of sofas for every 13 agents, so every agent has a seat even when all of them are
 idle. A desk's monitor is lit only while its owner is at it.
 
+Agents walk on fixed walkways: a corridor along the glass rooms, aisles between and behind the
+benches, and one down the lounge. They walk only in straight lines along the two floor axes, turn
+at right angles, go through doors, and never cut across desks, sofas or other furniture. In the
+**Night shift** look the walkways glow as red neon lines on the floor.
+
 The list on the left is grouped by rig, then by pod. The agent whose name ends in `.lead` is marked
 as the team's lead, with a star on its name tag in the office.
 
@@ -220,7 +225,8 @@ From then on the tunnel is `ssh -N backoffice`.
   prompt with "1. Yes / 2. … / 3. No"), the panel shows one button per choice.
 - Agent settings: the **Settings** button in the panel shows one agent's model, skills and tool
   rules, and saves changes to the team files (see below).
-- Two looks, switchable from the top bar: **Studio** and **Night shift**.
+- Two looks, switchable from **View** in the top bar: **Studio** and **Night shift** (dark, with
+  red and blue screen light and red neon walkways).
 - The standup room, QA lab, gym and janitor closet are in the building but not wired
   to anything yet. Layout editing, music, GitHub and Jira are also not built yet.
 

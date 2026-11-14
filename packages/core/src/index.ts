@@ -7,3 +7,4 @@ export * from './mock.ts';
 export * from './prompt.ts';
 export * from './settings.ts';
 export * from './tasks.ts';
+export * from './walkways.ts';

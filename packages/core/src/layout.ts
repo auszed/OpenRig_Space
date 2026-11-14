@@ -1,5 +1,6 @@
 import { behaviorFor, whereabouts } from './behavior.ts';
 import type { Agent, QueueItem } from './model.ts';
+import { walk, type Walkway } from './walkways.ts';
 
 /**
  * The floor plan as data. Units are metres; x runs left to right, z runs from
@@ -84,6 +85,8 @@ export interface Layout {
   review: WaitingArea;
   /** Framed prints on the walls: where each hangs and which way it faces. */
   wallArt: Array<{ x: number; z: number; rot: number }>;
+  /** The walkways people keep to, each straight along x or z. */
+  walkways: Walkway[];
 }
 
 export type Posture = 'desk' | 'sofa' | 'chair' | 'stand';
@@ -297,10 +300,16 @@ export function litDesks(agents: Agent[], queue: QueueItem[], home: Map<string, 
 }
 
 /**
- * The corners to walk through to get from one point to another: out of the
- * door of the room being left, in at the door of the room being entered.
+ * The corners to walk through to get from one point to another: straight lines along the floor
+ * axes, keeping to the walkways and around furniture and walls (`walkways.ts`). If the floor
+ * offers no way, it falls back to going out of the door of the room being left and in at the
+ * door of the room being entered.
  */
 export function route(from: { x: number; z: number }, to: { x: number; z: number }, layout: Layout): Array<{ x: number; z: number }> {
+  return walk(from, to, layout) ?? throughDoors(from, to, layout);
+}
+
+function throughDoors(from: { x: number; z: number }, to: { x: number; z: number }, layout: Layout): Array<{ x: number; z: number }> {
   const roomAt = (p: { x: number; z: number }) =>
     layout.rooms.find((r) => r.door && p.x > r.x && p.x < r.x + r.w && p.z > r.z && p.z < r.z + r.d);
   const [a, b] = [roomAt(from), roomAt(to)];
@@ -475,6 +484,39 @@ export function buildLayout(agents: Array<Pick<Agent, 'rig' | 'pod'>>): Layout {
     [-1.35, -0.45, 0.45, 1.35].map((dz): Placed => [LOUNGE_X + 2.5, z + dz, Math.PI / 2]),
   );
 
+  // --- Walkways ------------------------------------------------------------------------------
+  // A corridor along the back rooms' glass, a spur through every doorway, an aisle along the
+  // lounge and between its sofa groups, one between and after every row of benches, one between
+  // neighbouring benches, and one down the left of the open plan joining them all.
+  const loungeEnd = loungeZ + loungeDepth;
+  const corridorZ = glass + 0.7;
+  const leftX = OPEN_LEFT - 0.5;
+  const loungeAisleX = LOUNGE_X + 3.5;
+  const walkways: Walkway[] = [];
+  const along = (x1: number, z1: number, x2: number, z2: number) => walkways.push({ x1, z1, x2, z2 });
+  along(-16.3, corridorZ, OPEN_RIGHT - 0.2, corridorZ);
+  for (const doorX of [-13.5, -5, 3.5, 9.5]) along(doorX, glass - 0.5, doorX, corridorZ);
+  along(loungeAisleX, corridorZ, loungeAisleX, loungeEnd + 0.7);
+  along(-16.6, loungeEnd + 0.7, leftX, loungeEnd + 0.7);
+  let lowest = Math.max(corridorZ, loungeEnd + 0.7);
+  rows.forEach((row, r) => {
+    const z = glass + FIRST_ROW + r * ROW_PITCH;
+    const after = z + BENCH_CARPET / 2 + (ROW_PITCH - BENCH_CARPET) / 2;
+    along(leftX, after, OPEN_RIGHT - 0.2, after);
+    lowest = Math.max(lowest, after);
+    const benchesInRow = zones.filter((zn) => Math.abs(zn.z - z) < 1e-6);
+    const edges = benchesInRow.map((zn) => [zn.x - (benchWidth(zn.seats) + BENCH_MARGIN) / 2, zn.x + (benchWidth(zn.seats) + BENCH_MARGIN) / 2] as const);
+    for (let i = 1; i < edges.length; i++) {
+      const x = (edges[i - 1]![1] + edges[i]![0]) / 2;
+      along(x, z - BENCH_CARPET / 2 - (ROW_PITCH - BENCH_CARPET) / 2, x, after);
+    }
+  });
+  along(leftX, corridorZ, leftX, lowest);
+  // Gym and janitor's closet, through their doors.
+  along(OPEN_RIGHT - 0.2, glass + 4.5, 12.4, glass + 4.5);
+  along(OPEN_RIGHT - 0.2, corridorZ, OPEN_RIGHT - 0.2, glass + 4.5);
+  along(11.6, at(18.5), 14.4, at(18.5));
+
   // --- PR review -----------------------------------------------------------------------------
   const reviewSofa: Placed = [-5, at(5.4), Math.PI];
   const reviewChairs: Placed[] = [
@@ -561,11 +603,11 @@ export function buildLayout(agents: Array<Pick<Agent, 'rig' | 'pod'>>): Layout {
       ...loungeChairs.map(([x, z, rot]) => ({ kind: 'chair' as const, x, z, rot })),
       ...groupZ.map((z) => ({ kind: 'coffeeTable' as const, x: LOUNGE_X, z })),
       { kind: 'plant', x: -17.1, z: loungeZ - 0.2 },
-      { kind: 'plant', x: -9.2, z: loungeZ + loungeDepth + 0.6 },
+      { kind: 'plant', x: -9.6, z: loungeZ + loungeDepth + 1.6 },
       { kind: 'bookshelf', x: -17.6, z: loungeZ + loungeDepth + 1.4, rot: Math.PI / 2 },
       // Open plan
-      { kind: 'reception', x: openMiddle, z: Math.min(openEnd + 2.2, front - 1.6) },
-      { kind: 'plant', x: -9.6, z: glass + 1.2 },
+      // In front of the aisle after the last row, so the counter never stands on it.
+      { kind: 'reception', x: openMiddle, z: Math.min(openEnd + 3.1, front - 1.2) },
       { kind: 'plant', x: openMiddle, z: glass + 1.4 },
       { kind: 'plant', x: -9.4, z: front - 1.6 },
       { kind: 'plant', x: 9.4, z: front - 1.6 },
@@ -573,6 +615,7 @@ export function buildLayout(agents: Array<Pick<Agent, 'rig' | 'pod'>>): Layout {
     ],
     // A print over the side sofa of every lounge group.
     wallArt: groupZ.map((z) => ({ x: -WIDTH / 2 + 0.09, z, rot: 0 })),
+    walkways,
   };
 }
 
