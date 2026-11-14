@@ -1,11 +1,13 @@
 <script lang="ts">
   import { T, useTask, useThrelte } from '@threlte/core';
   import { HTML, interactivity, OrbitControls } from '@threlte/extras';
+  import { desksForZone, isLead } from '@backoffice/core';
   import * as THREE from 'three';
   import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
   import type { OrbitControls as ThreeOrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import type { OfficeStore } from '../state/office.svelte.ts';
   import AgentCharacter from './AgentCharacter.svelte';
+  import { MONITOR } from './build/furniture.ts';
   import { buildLights, buildOffice } from './build/office.ts';
   import { disposeMaterials, makeMaterials } from './build/kit.ts';
   import PostFx from './PostFx.svelte';
@@ -23,6 +25,9 @@
     const old = mats;
     return () => disposeMaterials(old);
   });
+
+  const desks = $derived(store.layout.zones.flatMap(desksForZone));
+  const SCREEN = new THREE.PlaneGeometry(MONITOR.w, MONITOR.h);
 
   const pmrem = new THREE.PMREMGenerator(renderer);
   const roomLight = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -56,7 +61,7 @@
       lastFollow = id;
       followedFor = 0;
     }
-    const seat = id ? store.seats.get(id) : undefined;
+    const seat = id ? (store.live.get(id) ?? store.seats.get(id)) : undefined;
     if (!seat || !camera || !controls) return;
     followedFor += delta;
     const ease = 1 - Math.exp(-delta * 4);
@@ -107,6 +112,22 @@
   {/if}
 {/each}
 
+<!-- A desk's screen is lit only while its owner is working at it. -->
+{#each desks as desk (desk.id)}
+  {#if store.litDesks.has(desk.id)}
+    <T.Mesh
+      geometry={SCREEN}
+      material={mats.screenOn}
+      position={[
+        desk.x + Math.sin(desk.rot) * (MONITOR.z + 0.002),
+        MONITOR.y + MONITOR.h / 2,
+        desk.z + Math.cos(desk.rot) * (MONITOR.z + 0.002),
+      ]}
+      rotation.y={desk.rot}
+    />
+  {/if}
+{/each}
+
 {#each store.snapshot.agents as agent (agent.id)}
   {@const seat = store.seats.get(agent.id)}
   {#if seat}
@@ -114,6 +135,9 @@
       {agent}
       {seat}
       {mats}
+      layout={store.layout}
+      live={store.live}
+      lead={isLead(agent)}
       theme={store.theme}
       color={store.colorOf(agent)}
       selected={store.selectedId === agent.id}

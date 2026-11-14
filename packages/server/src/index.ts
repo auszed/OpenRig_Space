@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
-import { MockSource, type OfficeSource } from '@backoffice/core';
+import { MemorySettings, MockSource, type OfficeSource } from '@backoffice/core';
 import { OpenRigSource } from '@backoffice/openrig-source';
 import { startServer } from './server.ts';
+import { TeamFileSettings } from './settings.ts';
 
 const port = Number(process.env.BACKOFFICE_PORT ?? 47831);
 const kind = process.env.BACKOFFICE_SOURCE ?? 'openrig';
@@ -15,6 +16,7 @@ const source: OfficeSource =
 try {
   const server = startServer({
     source,
+    settings: kind === 'mock' ? new MemorySettings() : new TeamFileSettings({ teamsDir: process.env.BACKOFFICE_TEAMS_DIR }),
     port,
     staticDir: resolve(import.meta.dir, '../../../apps/office/dist'),
   });
