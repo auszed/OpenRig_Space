@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reasonLabel, type Agent } from '@backoffice/core';
+  import { parsePromptOptions, reasonLabel, type Agent, type PromptOption } from '@backoffice/core';
   import type { OfficeStore } from '../state/office.svelte.ts';
 
   let { store, agent }: { store: OfficeStore; agent: Agent } = $props();
@@ -13,6 +13,104 @@
   let screen = $state('');
   let screenError = $state<string | null>(null);
   let screenEl = $state<HTMLPreElement>();
+  let rereadScreen: () => Promise<void> = async () => {};
+
+  // The numbered question at the bottom of the screen, if the agent is stopped at one.
+  const options = $derived(parsePromptOptions(screen));
+  let answering = $state(false);
+  let answerNotice = $state<{ ok: boolean; text: string } | null>(null);
+
+  async function answer(option: PromptOption) {
+    if (answering) return;
+    answering = true;
+    answerNotice = null;
+    try {
+      await store.answerPrompt(agent.id, option.key, option.label);
+      answerNotice = { ok: true, text: `Pressed ${option.key} (${option.label}).` };
+    } catch (err) {
+      answerNotice = { ok: false, text: (err as Error).message };
+    }
+    // Give the terminal a moment to redraw, then show what it looks like now.
+    await new Promise((done) => setTimeout(done, 700));
+    await rereadScreen();
+    answering = false;
+  }
+
+  // --- Moving and resizing the panel -------------------------------------------------------
+  type Rect = { left: number; top: number; width: number; height: number };
+  const RECT_KEY = 'backoffice.panel';
+  const MIN_W = 300;
+  const MIN_H = 260;
+  let panelEl = $state<HTMLElement>();
+  let rect = $state<Rect | null>(loadRect());
+
+  function loadRect(): Rect | null {
+    try {
+      const r = JSON.parse(localStorage.getItem(RECT_KEY) ?? 'null');
+      return r && [r.left, r.top, r.width, r.height].every(Number.isFinite) ? fit(r) : null;
+    } catch {
+      return null;
+    }
+  }
+  function saveRect() {
+    try {
+      if (rect) localStorage.setItem(RECT_KEY, JSON.stringify(rect));
+      else localStorage.removeItem(RECT_KEY);
+    } catch {
+      // Without storage the panel simply returns to its usual place next time.
+    }
+  }
+  /** Keeps the panel a usable size and its header reachable inside the window. */
+  function fit(r: Rect): Rect {
+    const width = Math.min(Math.max(r.width, MIN_W), window.innerWidth);
+    const top = Math.min(Math.max(r.top, 0), window.innerHeight - 48);
+    // The panel gets shorter rather than hanging below the window, so its bottom edge stays reachable.
+    const height = Math.max(MIN_H, Math.min(r.height, window.innerHeight - top - 8));
+    return { width, height, top, left: Math.min(Math.max(r.left, 80 - width), window.innerWidth - 80) };
+  }
+
+  /** `edges` is "move", or any of l, r, b for the sides being dragged. */
+  function startDrag(event: PointerEvent, edges: string) {
+    if (event.button !== 0 || !panelEl) return;
+    if (edges === 'move' && (event.target as HTMLElement).closest('button')) return;
+    event.preventDefault();
+    const box = panelEl.getBoundingClientRect();
+    const from: Rect = { left: box.left, top: box.top, width: box.width, height: box.height };
+    const x0 = event.clientX;
+    const y0 = event.clientY;
+    const handle = event.currentTarget as HTMLElement;
+    handle.setPointerCapture(event.pointerId);
+    const move = (e: PointerEvent) => {
+      const dx = e.clientX - x0;
+      const dy = e.clientY - y0;
+      const next = { ...from };
+      if (edges === 'move') {
+        next.left += dx;
+        next.top += dy;
+      } else {
+        if (edges.includes('r')) next.width = Math.max(MIN_W, from.width + dx);
+        if (edges.includes('b')) next.height = Math.max(MIN_H, from.height + dy);
+        if (edges.includes('l')) {
+          next.width = Math.max(MIN_W, from.width - dx);
+          next.left = from.left + from.width - next.width;
+        }
+      }
+      rect = fit(next);
+    };
+    const stop = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', stop);
+      handle.removeEventListener('pointercancel', stop);
+      saveRect();
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+  }
+  function resetRect() {
+    rect = null;
+    saveRect();
+  }
 
   // Re-read the agent's screen every few seconds while its panel is open.
   $effect(() => {
@@ -33,6 +131,7 @@
       }
     };
     void read();
+    rereadScreen = read;
     const timer = setInterval(read, 3000);
     return () => {
       live = false;
@@ -47,6 +146,7 @@
     agentId;
     draft = '';
     notice = null;
+    answerNotice = null;
   });
 
   async function send() {
@@ -66,8 +166,22 @@
   }
 </script>
 
-<aside aria-label="Agent details">
-  <div class="head">
+<svelte:window onresize={() => rect && (rect = fit(rect))} />
+
+<aside
+  aria-label="Agent details"
+  bind:this={panelEl}
+  class:floating={rect !== null}
+  style={rect ? `left:${rect.left}px; top:${rect.top}px; width:${rect.width}px; height:${rect.height}px` : undefined}
+>
+ <div class="body">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="head"
+    title="Drag to move · double-click to put back"
+    onpointerdown={(e) => startDrag(e, 'move')}
+    ondblclick={(e) => !(e.target as HTMLElement).closest('button') && resetRect()}
+  >
     <span class="swatch" style:background={store.colorOf(agent)}></span>
     <div class="title">
       <h2>{agent.name}</h2>
@@ -116,6 +230,21 @@
   {/if}
   <pre bind:this={screenEl}>{screen || (screenError ? '' : 'Reading…')}</pre>
 
+  {#if options.length > 0}
+    <section class="answer" aria-label="Answer the question on screen">
+      <h3>Answer {agent.name}</h3>
+      <p class="muted">Pressing a choice presses that key in the agent's terminal.</p>
+      {#each options as option (option.key)}
+        <button class="choice" class:current={option.selected} disabled={answering} onclick={() => answer(option)}>
+          <kbd>{option.key}</kbd><span>{option.label}</span>
+        </button>
+      {/each}
+    </section>
+  {/if}
+  {#if answerNotice}
+    <p class={answerNotice.ok ? 'muted' : 'error'} role="status">{answerNotice.text}</p>
+  {/if}
+
   <form
     onsubmit={(e) => {
       e.preventDefault();
@@ -141,6 +270,17 @@
       <button class="primary" disabled={sending || !draft.trim()}>{sending ? 'Sending…' : 'Send'}</button>
     </div>
   </form>
+ </div>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="grip l" onpointerdown={(e) => startDrag(e, 'l')}></div>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="grip r" onpointerdown={(e) => startDrag(e, 'r')}></div>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="grip b" onpointerdown={(e) => startDrag(e, 'b')}></div>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="grip bl" onpointerdown={(e) => startDrag(e, 'lb')}></div>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="grip br" title="Drag to resize" onpointerdown={(e) => startDrag(e, 'rb')}></div>
 </aside>
 
 <style>
@@ -150,20 +290,127 @@
     right: 12px;
     bottom: 12px;
     width: min(400px, calc(100vw - 24px));
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 14px;
     border-radius: 12px;
     background: var(--panel);
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
+  }
+  aside.floating {
+    right: auto;
+    bottom: auto;
+  }
+  .body {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
     overflow-y: auto;
   }
   .head {
     display: flex;
     align-items: center;
     gap: 10px;
+    cursor: move;
+    user-select: none;
+    touch-action: none;
+  }
+  .grip {
+    position: absolute;
+    touch-action: none;
+  }
+  .grip.l,
+  .grip.r {
+    top: 12px;
+    bottom: 12px;
+    width: 8px;
+    cursor: ew-resize;
+  }
+  .grip.l {
+    left: -4px;
+  }
+  .grip.r {
+    right: -4px;
+  }
+  .grip.b {
+    left: 12px;
+    right: 12px;
+    bottom: -4px;
+    height: 8px;
+    cursor: ns-resize;
+  }
+  .grip.bl,
+  .grip.br {
+    bottom: -4px;
+    width: 16px;
+    height: 16px;
+  }
+  .grip.bl {
+    left: -4px;
+    cursor: nesw-resize;
+  }
+  .grip.br {
+    right: -4px;
+    cursor: nwse-resize;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    border-bottom-right-radius: 12px;
+    opacity: 0.6;
+  }
+  .answer {
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+  }
+  .answer h3 {
+    margin: 0;
+    color: var(--text);
+  }
+  .choice {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel-solid);
+    color: var(--text);
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .choice:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+  .choice.current {
+    border-color: var(--accent);
+  }
+  .choice:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  kbd {
+    flex: none;
+    min-width: 20px;
+    padding: 0 5px;
+    border-radius: 5px;
+    background: var(--border);
+    font: 600 12px ui-monospace, Menlo, Consolas, monospace;
+    text-align: center;
+  }
+  @media (max-width: 720px) {
+    aside.floating {
+      left: 12px !important;
+      top: 70px !important;
+      width: auto !important;
+      height: auto !important;
+      right: 12px;
+      bottom: 12px;
+    }
+    .grip {
+      display: none;
+    }
   }
   .swatch {
     width: 10px;

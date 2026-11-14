@@ -31,7 +31,8 @@ office from your own computer, see [Open it from your PC](#open-it-from-your-pc-
 | `OPENRIG_TERMINAL_BEARER_TOKEN` | unset | Only if your daemon was started with tokens. |
 
 Controls: drag to move, scroll to zoom, right-drag to turn, click an agent (or its row in the list)
-to open it, `Follow` to keep the camera on it, `Esc` to close.
+to open it, `Follow` to keep the camera on it, `Esc` to close. The agent panel can be dragged by its
+header and resized from its left, right and bottom edges; double-click the header to put it back.
 
 ## How it works, in short
 
@@ -54,7 +55,8 @@ to open it, `Follow` to keep the camera on it, `Esc` to close.
    changes state, OpenRig tells the server, the server tells the browser, and the character changes
    within about a second.
 4. **Clicking an agent** asks the server for that agent's terminal text and its open tasks. The
-   message box sends your text to the server, which types it into that agent's prompt.
+   message box sends your text to the server, which types it into that agent's prompt. If the agent
+   is stopped at a numbered question, the panel offers its choices as buttons.
 
 The browser never talks to OpenRig or to the agents directly. Everything goes through the office
 server, and the office server only listens on the VPS itself. That is why you need the tunnel.
@@ -149,14 +151,24 @@ From then on the tunnel is `ssh -N backoffice`.
 - Live office: one character per OpenRig seat, grouped by pod, updated within a second or so of a change.
 - Status you can read from across the room: typing (working), still (idle), an orange bubble with
   the reason (waiting for you), greyed out (unknown).
-- Agent panel: work counts, context used, open tasks, the live screen, and a message box.
+- Agent panel: work counts, context used, open tasks, the live screen, and a message box. It can be
+  moved and resized, and remembers where you left it.
+- Answering an agent: when an agent is stopped at a numbered question (for example a permission
+  prompt with "1. Yes / 2. … / 3. No"), the panel shows one button per choice.
 - Two looks, switchable from the top bar: **Studio** and **Night shift**.
 - The standup room, PR review room, QA lab, gym and janitor closet are in the building but not wired
   to anything yet. Layout editing, music, GitHub and Jira are also not built yet.
 
-The message box types straight into the agent's prompt, exactly like `rig send`. Nothing else in
-this version changes anything: there are no buttons that answer permission prompts or stop,
-reset or relaunch agents.
+Two things in the office act on a real agent:
+
+- **The message box** types your text into the agent's prompt, exactly like `rig send`. OpenRig
+  refuses it while the agent is stopped at a question.
+- **The answer buttons** press one digit in the agent's terminal, which picks that choice. This is
+  the same as you pressing the key there, so "Yes" really approves the command shown above it.
+  The server reads the screen again first and presses nothing if that question is no longer the
+  one on screen. OpenRig records each answer in its audit log.
+
+There are no buttons that stop, reset or relaunch agents.
 
 ## How it is put together
 
@@ -194,7 +206,7 @@ nobody moves when a status changes.
 
 ### Use something other than OpenRig
 
-Implement the four methods of `OfficeSource` (`packages/core/src/source.ts`) and pass it to
+Implement the five methods of `OfficeSource` (`packages/core/src/source.ts`) and pass it to
 `startServer()`. `MockSource` is a small example.
 
 ## Develop

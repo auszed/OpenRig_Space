@@ -112,4 +112,17 @@ export class OfficeStore {
       throw new Error(body.error ?? `Message not sent (${res.status})`);
     }
   }
+
+  /** Presses the digit of one choice in the question the agent is stopped at. */
+  async answerPrompt(agentId: string, key: string, label: string): Promise<void> {
+    const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key, label }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? `Answer not sent (${res.status})`);
+    }
+  }
 }

@@ -16,6 +16,7 @@ const SEATS: Array<[rig: string, pod: string, name: string, status: AgentStatus,
 export class MockSource implements OfficeSource {
   readonly name = 'mock';
   readonly sent: Array<{ session: string; text: string }> = [];
+  readonly answered: Array<{ session: string; key: string }> = [];
   private listeners = new Set<() => void>();
   private agents: Agent[] = SEATS.map(([rig, pod, name, status, reason], i) => ({
     id: `mock-${i + 1}`,
@@ -65,10 +66,19 @@ export class MockSource implements OfficeSource {
   }
 
   async readScreen(session: string, lines: number): Promise<string> {
+    if (this.agents.find((a) => a.session === session)?.status === 'needs-input') {
+      return `(mock screen for ${session})\n Bash command\n rm -rf build\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again\n   3. No\n`;
+    }
     return `(mock screen for ${session}, last ${lines} lines)\n> compiling...\n> 12 tests passed`;
   }
 
   async sendMessage(session: string, text: string): Promise<void> {
     this.sent.push({ session, text });
+  }
+
+  async answerPrompt(session: string, key: string): Promise<void> {
+    this.answered.push({ session, key });
+    const agent = this.agents.find((a) => a.session === session);
+    if (agent) this.setStatus(agent.id, 'working');
   }
 }
